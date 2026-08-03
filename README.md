@@ -1,5 +1,10 @@
 # 1Monitor SDK for PHP
 
+[![CI](https://github.com/1monitor/sdk-php/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/1monitor/sdk-php/actions/workflows/ci.yml)
+[![Packagist](https://img.shields.io/packagist/v/1monitor/sdk-php.svg)](https://packagist.org/packages/1monitor/sdk-php)
+[![PHP](https://img.shields.io/packagist/dependency-v/1monitor/sdk-php/php.svg)](https://packagist.org/packages/1monitor/sdk-php)
+[![License](https://img.shields.io/packagist/l/1monitor/sdk-php.svg)](LICENSE)
+
 Official PHP SDK for [1Monitor](https://1monitor.io) — ping your cron jobs, queue workers and scheduled tasks so you find out when they stop running.
 
 ```php
