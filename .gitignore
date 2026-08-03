@@ -1,3 +1,6 @@
-/log
-/temp
-
+/vendor/
+/composer.lock
+/.phpunit.cache/
+/.phpunit.result.cache
+/.idea/
+/.DS_Store
