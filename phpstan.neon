@@ -1,0 +1,11 @@
+parameters:
+    level: max
+    paths:
+        - src
+        - tests
+
+    # The package supports PHP 8.1+, so analyse against the whole supported
+    # range rather than whichever version the CI job happens to run.
+    phpVersion:
+        min: 80100
+        max: 80500

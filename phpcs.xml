@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<ruleset name="1monitor-sdk-php">
+    <description>PSR-12. Spaces, not tabs — this repo follows community conventions.</description>
+
+    <file>src</file>
+    <file>tests</file>
+
+    <arg name="colors"/>
+    <arg name="extensions" value="php"/>
+    <arg value="ps"/>
+
+    <rule ref="PSR12"/>
+</ruleset>

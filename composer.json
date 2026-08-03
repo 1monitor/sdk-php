@@ -1,0 +1,41 @@
+{
+    "name": "1monitor/sdk-php",
+    "description": "Official PHP SDK for 1Monitor — ping your cron jobs, workers and scheduled tasks.",
+    "type": "library",
+    "license": "MIT",
+    "keywords": ["1monitor", "monitoring", "cron", "heartbeat", "ping", "uptime", "observability"],
+    "homepage": "https://1monitor.io",
+    "support": {
+        "issues": "https://github.com/1monitor/sdk-php/issues",
+        "source": "https://github.com/1monitor/sdk-php"
+    },
+    "require": {
+        "php": ">=8.1",
+        "guzzlehttp/guzzle": "^7.0",
+        "psr/log": "^1.1 || ^2.0 || ^3.0"
+    },
+    "require-dev": {
+        "phpstan/phpstan": "^2.0",
+        "phpunit/phpunit": "^10.5 || ^11.0 || ^12.0",
+        "squizlabs/php_codesniffer": "^3.9"
+    },
+    "autoload": {
+        "psr-4": {
+            "OneMonitor\\Sdk\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "OneMonitor\\Sdk\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "test": "phpunit",
+        "stan": "phpstan analyse",
+        "cs": "phpcs",
+        "cs-fix": "phpcbf"
+    },
+    "config": {
+        "sort-packages": true
+    }
+}
