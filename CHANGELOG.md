@@ -8,6 +8,11 @@ While the package is at `0.x`, minor releases may contain breaking changes.
 
 ## [Unreleased]
 
+### Added
+
+- `ping()`, `pingSuccess()` and `pingFail()` accept optional named `exitCode` and `output` arguments, so a ping can carry the job's exit code (`?exit_code=N`) and output (request body, sent as `POST`).
+- `Client::MAX_OUTPUT_BYTES` (10 KB) — the server's payload cap, enforced client-side: longer output is truncated (without splitting a UTF-8 character) before sending.
+
 ## [0.1.0] - 2026-08-03
 
 Initial release.

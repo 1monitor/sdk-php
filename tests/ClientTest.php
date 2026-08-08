@@ -42,6 +42,138 @@ final class ClientTest extends TestCase
         self::assertSame($expectedUrl, (string) $requests[0]->getUri());
     }
 
+    /** @return iterable<string, array{string, string}> */
+    public static function resultCarryingMethods(): iterable
+    {
+        yield 'ping' => ['ping', 'https://ping.1monitor.io/ping/tok_abc'];
+        yield 'pingSuccess' => ['pingSuccess', 'https://ping.1monitor.io/ping/tok_abc/success'];
+        yield 'pingFail' => ['pingFail', 'https://ping.1monitor.io/ping/tok_abc/fail'];
+    }
+
+    #[DataProvider('resultCarryingMethods')]
+    public function testExitCodeIsSentAsAQueryParameter(string $method, string $expectedUrl): void
+    {
+        $requests = [];
+        $client = self::clientFor([new Response(200)], $requests);
+
+        self::assertTrue($client->{$method}('tok_abc', exitCode: 42));
+        self::assertSame($expectedUrl . '?exit_code=42', (string) $requests[0]->getUri());
+        self::assertSame('GET', $requests[0]->getMethod());
+    }
+
+    public function testExitCodeZeroIsStillSent(): void
+    {
+        $requests = [];
+        $client = self::clientFor([new Response(200)], $requests);
+
+        $client->pingSuccess('tok_abc', exitCode: 0);
+
+        self::assertSame(
+            'https://ping.1monitor.io/ping/tok_abc/success?exit_code=0',
+            (string) $requests[0]->getUri(),
+        );
+    }
+
+    public function testWithoutAnExitCodeThereIsNoQueryString(): void
+    {
+        $requests = [];
+        $client = self::clientFor([new Response(200)], $requests);
+
+        $client->pingFail('tok_abc');
+
+        self::assertSame('https://ping.1monitor.io/ping/tok_abc/fail', (string) $requests[0]->getUri());
+    }
+
+    #[DataProvider('resultCarryingMethods')]
+    public function testOutputIsPostedAsTheRequestBody(string $method, string $expectedUrl): void
+    {
+        $requests = [];
+        $client = self::clientFor([new Response(200)], $requests);
+
+        self::assertTrue($client->{$method}('tok_abc', output: "error: disk full\n"));
+        self::assertSame('POST', $requests[0]->getMethod());
+        self::assertSame($expectedUrl, (string) $requests[0]->getUri());
+        self::assertSame("error: disk full\n", (string) $requests[0]->getBody());
+        self::assertSame('text/plain; charset=utf-8', $requests[0]->getHeaderLine('Content-Type'));
+    }
+
+    public function testExitCodeAndOutputTravelTogether(): void
+    {
+        $requests = [];
+        $client = self::clientFor([new Response(200)], $requests);
+
+        $client->pingFail('tok_abc', exitCode: 1, output: 'boom');
+
+        self::assertSame('POST', $requests[0]->getMethod());
+        self::assertSame(
+            'https://ping.1monitor.io/ping/tok_abc/fail?exit_code=1',
+            (string) $requests[0]->getUri(),
+        );
+        self::assertSame('boom', (string) $requests[0]->getBody());
+    }
+
+    public function testEmptyOutputSendsAPlainGetPing(): void
+    {
+        $requests = [];
+        $client = self::clientFor([new Response(200)], $requests);
+
+        $client->pingFail('tok_abc', output: '');
+
+        self::assertSame('GET', $requests[0]->getMethod());
+        self::assertSame('', (string) $requests[0]->getBody());
+    }
+
+    public function testOversizedOutputIsTruncatedBeforeSending(): void
+    {
+        $requests = [];
+        $client = self::clientFor([new Response(200)], $requests);
+
+        $client->pingFail('tok_abc', output: str_repeat('x', Client::MAX_OUTPUT_BYTES + 500));
+
+        self::assertSame(Client::MAX_OUTPUT_BYTES, strlen((string) $requests[0]->getBody()));
+    }
+
+    public function testTruncationDoesNotSplitAMultibyteCharacter(): void
+    {
+        $requests = [];
+        $client = self::clientFor([new Response(200)], $requests);
+
+        // The euro sign is 3 bytes; starting it 1 byte before the cap would split it.
+        $output = str_repeat('a', Client::MAX_OUTPUT_BYTES - 1) . '€€€';
+        $client->pingFail('tok_abc', output: $output);
+
+        $body = (string) $requests[0]->getBody();
+        self::assertSame(Client::MAX_OUTPUT_BYTES - 1, strlen($body));
+        self::assertSame('a', substr($body, -1));
+    }
+
+    public function testOutputWithinTheCapIsNotTouched(): void
+    {
+        $requests = [];
+        $client = self::clientFor([new Response(200)], $requests);
+
+        $output = str_repeat('€', intdiv(Client::MAX_OUTPUT_BYTES, 3));
+        $client->pingFail('tok_abc', output: $output);
+
+        self::assertSame($output, (string) $requests[0]->getBody());
+    }
+
+    public function testTheOutputCapMirrorsTheServerLimit(): void
+    {
+        self::assertSame(10 * 1024, Client::MAX_OUTPUT_BYTES);
+    }
+
+    public function testTheLoggedContextDoesNotLeakTheOutput(): void
+    {
+        $logger = new RecordingLogger();
+        $requests = [];
+        $client = self::clientFor([new Response(500)], $requests, retries: 0, logger: $logger);
+
+        $client->pingFail('tok_abc', exitCode: 1, output: 'password=hunter2');
+
+        self::assertStringNotContainsString('hunter2', json_encode($logger->records[0]['context']) ?: '');
+    }
+
     public function testPingSendsTheSdkUserAgent(): void
     {
         $requests = [];
