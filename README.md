@@ -54,13 +54,34 @@ try {
     doTheWork();
     $client->pingSuccess($token);
 } catch (Throwable $e) {
-    $client->pingFail($token);
+    $client->pingFail($token, output: $e->getMessage());
 
     throw $e;
 }
 ```
 
 Put the `pingFail` before the rethrow, not in a `finally`, so a crash still closes the run — and so the exception keeps propagating exactly as it would without the SDK.
+
+### Saying *why* it failed
+
+`ping`, `pingSuccess` and `pingFail` optionally carry the job's exit code and output, so the alert can tell you what went wrong instead of just that something did:
+
+```php
+$exitCode = 0;
+$stderr = '';
+
+// ... run the job, capturing $exitCode and $stderr ...
+
+if ($exitCode === 0) {
+    $client->pingSuccess($token, exitCode: $exitCode);
+} else {
+    $client->pingFail($token, exitCode: $exitCode, output: $stderr);
+}
+```
+
+The exit code travels as `?exit_code=N`; a non-zero value marks the ping as failed even on a bare `ping()`. The output travels as the request body and is capped at 10 KB (`Client::MAX_OUTPUT_BYTES`) — the SDK truncates longer output before sending, because that is all the server would keep anyway.
+
+1Monitor sweeps common credential shapes (tokens, API keys, private keys) out of ping output before storing it, but that is a safety net, not permission: send your job's diagnostic output, not its environment or its config.
 
 ### From a cron job
 
@@ -100,12 +121,14 @@ Keep the token in the environment rather than in the source — it is a credenti
 
 | Method | URL | Meaning |
 |---|---|---|
-| `ping($token)` | `/ping/{token}` | The job is alive. |
+| `ping($token, ?$exitCode, ?$output)` | `/ping/{token}` | The job is alive. |
 | `pingStart($token)` | `/ping/{token}/start` | A run has started. |
-| `pingSuccess($token)` | `/ping/{token}/success` | The open run finished successfully. |
-| `pingFail($token)` | `/ping/{token}/fail` | The open run failed. |
+| `pingSuccess($token, ?$exitCode, ?$output)` | `/ping/{token}/success` | The open run finished successfully. |
+| `pingFail($token, ?$exitCode, ?$output)` | `/ping/{token}/fail` | The open run failed. |
 
 Each returns `bool`: `true` when 1Monitor accepted the ping, `false` when it did not.
+
+`exitCode` and `output` are optional and named. A ping with output is sent as a `POST` with the output as the body; without one it stays a `GET`. `pingStart` carries neither — the job has not produced a result yet. Exit codes outside 0–255 are ignored by the server.
 
 ## Options
 

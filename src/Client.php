@@ -26,6 +26,12 @@ final class Client
     public const DEFAULT_TIMEOUT = 5.0;
     public const DEFAULT_RETRIES = 2;
 
+    /**
+     * The server keeps at most this many bytes of ping output; anything longer
+     * is truncated client-side rather than sent just to be cut anyway.
+     */
+    public const MAX_OUTPUT_BYTES = 10 * 1024;
+
     /** Seconds to wait before retry N; the last entry repeats for further retries. */
     private const BACKOFF_SECONDS = [0.5, 1.0];
 
@@ -64,11 +70,14 @@ final class Client
     /**
      * Records a liveness ping — the job is alive.
      *
+     * @param int|null    $exitCode The job's exit code; values outside 0–255 are ignored by the server.
+     * @param string|null $output   The job's output, sent as the request body; an empty string sends none.
+     *
      * @throws InvalidArgumentException on an empty token
      */
-    public function ping(string $token): bool
+    public function ping(string $token, ?int $exitCode = null, ?string $output = null): bool
     {
-        return $this->send($token, PingState::Ping);
+        return $this->send($token, PingState::Ping, $exitCode, $output);
     }
 
     /**
@@ -78,36 +87,48 @@ final class Client
      */
     public function pingStart(string $token): bool
     {
-        return $this->send($token, PingState::Start);
+        return $this->send($token, PingState::Start, null, null);
     }
 
     /**
      * Closes the open run as successful.
      *
+     * @param int|null    $exitCode The job's exit code; values outside 0–255 are ignored by the server.
+     * @param string|null $output   The job's output, sent as the request body; an empty string sends none.
+     *
      * @throws InvalidArgumentException on an empty token
      */
-    public function pingSuccess(string $token): bool
+    public function pingSuccess(string $token, ?int $exitCode = null, ?string $output = null): bool
     {
-        return $this->send($token, PingState::Success);
+        return $this->send($token, PingState::Success, $exitCode, $output);
     }
 
     /**
      * Closes the open run as failed.
      *
+     * @param int|null    $exitCode The job's exit code; values outside 0–255 are ignored by the server.
+     * @param string|null $output   The job's output, sent as the request body; an empty string sends none.
+     *
      * @throws InvalidArgumentException on an empty token
      */
-    public function pingFail(string $token): bool
+    public function pingFail(string $token, ?int $exitCode = null, ?string $output = null): bool
     {
-        return $this->send($token, PingState::Fail);
+        return $this->send($token, PingState::Fail, $exitCode, $output);
     }
 
-    private function send(string $token, PingState $state): bool
+    private function send(string $token, PingState $state, ?int $exitCode, ?string $output): bool
     {
         if (trim($token) === '') {
             throw new InvalidArgumentException('Ping token must not be empty.');
         }
 
         $url = $this->baseUrl . '/ping/' . rawurlencode($token) . $state->pathSuffix();
+
+        if ($exitCode !== null) {
+            $url .= '?exit_code=' . $exitCode;
+        }
+
+        $body = $output === null || $output === '' ? null : self::truncateOutput($output);
 
         // The timeout is a budget for time spent on the wire, spread across all
         // attempts, so that retrying cannot multiply how long the monitored job
@@ -122,7 +143,7 @@ final class Client
         while ($attempt < $maxAttempts) {
             $attempt++;
 
-            [$status, $error, $elapsed] = $this->attempt($url, $budget);
+            [$status, $error, $elapsed] = $this->attempt($url, $body, $budget);
             $budget -= $elapsed;
 
             if ($status !== null && $status >= 200 && $status < 300) {
@@ -154,19 +175,29 @@ final class Client
      * @return array{0: int|null, 1: Throwable|null, 2: float} status (null on transport
      *     failure), the error if any, and seconds spent
      */
-    private function attempt(string $url, float $budget): array
+    private function attempt(string $url, ?string $body, float $budget): array
     {
         $startedAt = microtime(true);
 
+        $headers = [
+            'User-Agent' => '1monitor-sdk-php/' . self::VERSION,
+        ];
+
+        $options = [
+            'timeout' => $budget,
+            'connect_timeout' => $budget,
+            'http_errors' => false,
+        ];
+
+        if ($body !== null) {
+            $headers['Content-Type'] = 'text/plain; charset=utf-8';
+            $options['body'] = $body;
+        }
+
+        $options['headers'] = $headers;
+
         try {
-            $response = $this->httpClient->request('GET', $url, [
-                'timeout' => $budget,
-                'connect_timeout' => $budget,
-                'http_errors' => false,
-                'headers' => [
-                    'User-Agent' => '1monitor-sdk-php/' . self::VERSION,
-                ],
-            ]);
+            $response = $this->httpClient->request($body === null ? 'GET' : 'POST', $url, $options);
 
             return [$response->getStatusCode(), null, microtime(true) - $startedAt];
         } catch (RequestException $e) {
@@ -174,6 +205,37 @@ final class Client
         } catch (Throwable $e) {
             return [null, $e, microtime(true) - $startedAt];
         }
+    }
+
+    private static function truncateOutput(string $output): string
+    {
+        if (strlen($output) <= self::MAX_OUTPUT_BYTES) {
+            return $output;
+        }
+
+        $cut = substr($output, 0, self::MAX_OUTPUT_BYTES);
+
+        // A UTF-8 sequence is at most 4 bytes; if the cut landed inside one,
+        // drop the dangling lead so the body stays valid UTF-8.
+        for ($i = strlen($cut) - 1; $i >= strlen($cut) - 4 && $i >= 0; $i--) {
+            $byte = ord($cut[$i]);
+
+            if ($byte < 0x80) {
+                break;
+            }
+
+            if ($byte >= 0xC0) {
+                $sequenceLength = $byte >= 0xF0 ? 4 : ($byte >= 0xE0 ? 3 : 2);
+
+                if (strlen($cut) - $i < $sequenceLength) {
+                    $cut = substr($cut, 0, $i);
+                }
+
+                break;
+            }
+        }
+
+        return $cut;
     }
 
     private function sleepBeforeRetry(int $attempt): void
