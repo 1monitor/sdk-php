@@ -6,6 +6,7 @@ namespace OneMonitor\Sdk;
 
 use GuzzleHttp\Client as GuzzleClient;
 use GuzzleHttp\ClientInterface;
+use GuzzleHttp\Exception\BadResponseException;
 use GuzzleHttp\Exception\RequestException;
 use OneMonitor\Sdk\Exception\InvalidArgumentException;
 use Psr\Log\LoggerInterface;
@@ -170,7 +171,11 @@ final class Client
 
             return [$response->getStatusCode(), null, microtime(true) - $startedAt];
         } catch (RequestException $e) {
-            return [$e->getResponse()?->getStatusCode(), $e, microtime(true) - $startedAt];
+            // Guzzle 7 keeps the response on RequestException, Guzzle 8 only on
+            // BadResponseException; the latter is the shape both majors share.
+            $response = $e instanceof BadResponseException ? $e->getResponse() : null;
+
+            return [$response?->getStatusCode(), $e, microtime(true) - $startedAt];
         } catch (Throwable $e) {
             return [null, $e, microtime(true) - $startedAt];
         }

@@ -8,13 +8,14 @@ use GuzzleHttp\Client as GuzzleClient;
 use GuzzleHttp\Exception\ConnectException;
 use GuzzleHttp\Handler\MockHandler;
 use GuzzleHttp\HandlerStack;
-use GuzzleHttp\Promise\Create;
+use GuzzleHttp\Promise\FulfilledPromise;
 use GuzzleHttp\Promise\PromiseInterface;
 use GuzzleHttp\Psr7\Request;
 use GuzzleHttp\Psr7\Response;
 use OneMonitor\Sdk\Client;
 use PHPUnit\Framework\TestCase;
 use Psr\Http\Message\RequestInterface;
+use Psr\Http\Message\ResponseInterface;
 
 final class RetryTest extends TestCase
 {
@@ -84,7 +85,7 @@ final class RetryTest extends TestCase
             $attempts++;
             usleep(120_000);
 
-            return Create::promiseFor(new Response(500));
+            return self::respondWith(new Response(500));
         };
 
         $client = new Client(
@@ -107,7 +108,7 @@ final class RetryTest extends TestCase
             $timeouts[] = $options['timeout'];
             usleep(30_000);
 
-            return Create::promiseFor(new Response(500));
+            return self::respondWith(new Response(500));
         };
 
         $client = new Client(
@@ -122,6 +123,17 @@ final class RetryTest extends TestCase
         self::assertSame(5.0, $timeouts[0]);
         self::assertLessThan(5.0, $timeouts[1], 'the retry only gets what the first attempt left');
         self::assertGreaterThan(4.9, $timeouts[1]);
+    }
+
+    /**
+     * Typed as the promise a Guzzle handler must produce; inferring the type
+     * from a concrete Response would not satisfy the invariant template.
+     *
+     * @return PromiseInterface<ResponseInterface, mixed>
+     */
+    private static function respondWith(ResponseInterface $response): PromiseInterface
+    {
+        return new FulfilledPromise($response);
     }
 
     private static function clientFor(MockHandler $handler, int $retries): Client
