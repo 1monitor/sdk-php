@@ -5,6 +5,9 @@ declare(strict_types=1);
 namespace OneMonitor\Sdk;
 
 use GuzzleHttp\Client as GuzzleClient;
+use GuzzleHttp\ClientInterface as GuzzleClientInterface;
+use GuzzleHttp\Exception\BadResponseException;
+use GuzzleHttp\Exception\RequestException;
 use GuzzleHttp\Psr7\HttpFactory;
 use OneMonitor\Sdk\Exception\InvalidArgumentException;
 use Psr\Http\Client\ClientInterface;
@@ -48,11 +51,11 @@ final class Client
     private readonly StreamFactoryInterface $streamFactory;
 
     /**
-     * @param float $timeout Time budget for one ping across all attempts, in
-     *     seconds. A retry never starts once it is spent. It is also the
-     *     per-attempt socket timeout of the default HTTP client; an injected
-     *     PSR-18 client brings its own socket timeouts (PSR-18 has no
-     *     per-request options), so configure them there too.
+     * @param float $timeout Overall deadline for one ping across all attempts,
+     *     in seconds. With the default (or any Guzzle) client it is enforced
+     *     per attempt too; a non-Guzzle PSR-18 client brings its own socket
+     *     timeouts (PSR-18 has no per-request options), and the budget then
+     *     only prevents further retries from starting.
      * @param int $retries Extra attempts after the first one fails. 0 disables retrying.
      *
      * @throws InvalidArgumentException
@@ -76,10 +79,7 @@ final class Client
 
         $this->baseUrl = self::normalizeBaseUrl($baseUrl);
         $this->logger = $logger ?? new NullLogger();
-        $this->httpClient = $httpClient ?? new GuzzleClient([
-            'timeout' => $timeout,
-            'connect_timeout' => $timeout,
-        ]);
+        $this->httpClient = $httpClient ?? new GuzzleClient();
 
         $factory = new HttpFactory();
         $this->requestFactory = $requestFactory ?? $factory;
@@ -151,9 +151,9 @@ final class Client
 
         // The timeout is a budget for time spent on the wire, spread across all
         // attempts, so that retrying cannot multiply how long the monitored job
-        // is held up: no retry starts once the budget is spent. The per-attempt
-        // socket timeout belongs to the HTTP client (PSR-18 has no per-request
-        // options); backoff sleeps are deliberately outside the budget.
+        // is held up: no retry starts once the budget is spent, and a Guzzle
+        // client additionally gets the remaining budget as each attempt's
+        // socket timeout. Backoff sleeps are deliberately outside the budget.
         $budget = $this->timeout;
         $maxAttempts = $this->retries + 1;
 
@@ -164,7 +164,7 @@ final class Client
         while ($attempt < $maxAttempts) {
             $attempt++;
 
-            [$status, $error, $elapsed] = $this->attempt($url, $body);
+            [$status, $error, $elapsed] = $this->attempt($url, $body, $budget);
             $budget -= $elapsed;
 
             if ($status !== null && $status >= 200 && $status < 300) {
@@ -193,16 +193,73 @@ final class Client
     /**
      * One HTTP attempt.
      *
+     * A Guzzle client — the default, or any injected one — is driven through
+     * `request()` so the remaining budget caps this attempt's socket timeout
+     * and redirects are followed. Guzzle's own PSR-18 adapter offers neither:
+     * PSR-18 has no per-request options and its `sendRequest()` disables
+     * redirect following.
+     *
      * @return array{0: int|null, 1: Throwable|null, 2: float} status (null on transport
      *     failure), the error if any, and seconds spent
      */
-    private function attempt(string $url, ?string $body): array
+    private function attempt(string $url, ?string $body, float $budget): array
+    {
+        if ($this->httpClient instanceof GuzzleClientInterface) {
+            return $this->attemptWithGuzzle($this->httpClient, $url, $body, $budget);
+        }
+
+        return $this->attemptWithPsr18($url, $body);
+    }
+
+    /** @return array{0: int|null, 1: Throwable|null, 2: float} */
+    private function attemptWithGuzzle(
+        GuzzleClientInterface $client,
+        string $url,
+        ?string $body,
+        float $budget,
+    ): array {
+        $startedAt = microtime(true);
+
+        $headers = [
+            'User-Agent' => self::userAgent(),
+        ];
+
+        $options = [
+            'timeout' => $budget,
+            'connect_timeout' => $budget,
+            'http_errors' => false,
+        ];
+
+        if ($body !== null) {
+            $headers['Content-Type'] = 'text/plain; charset=utf-8';
+            $options['body'] = $body;
+        }
+
+        $options['headers'] = $headers;
+
+        try {
+            $response = $client->request($body === null ? 'GET' : 'POST', $url, $options);
+
+            return [$response->getStatusCode(), null, microtime(true) - $startedAt];
+        } catch (RequestException $e) {
+            // Guzzle 7 keeps the response on RequestException, Guzzle 8 only on
+            // BadResponseException; the latter is the shape both majors share.
+            $response = $e instanceof BadResponseException ? $e->getResponse() : null;
+
+            return [$response?->getStatusCode(), $e, microtime(true) - $startedAt];
+        } catch (Throwable $e) {
+            return [null, $e, microtime(true) - $startedAt];
+        }
+    }
+
+    /** @return array{0: int|null, 1: Throwable|null, 2: float} */
+    private function attemptWithPsr18(string $url, ?string $body): array
     {
         $startedAt = microtime(true);
 
         $request = $this->requestFactory
             ->createRequest($body === null ? 'GET' : 'POST', $url)
-            ->withHeader('User-Agent', sprintf('1monitor-sdk-php/%s (PHP %s)', self::VERSION, PHP_VERSION));
+            ->withHeader('User-Agent', self::userAgent());
 
         if ($body !== null) {
             $request = $request
@@ -219,6 +276,11 @@ final class Client
             // caught here is a transport failure with no response to inspect.
             return [null, $e, microtime(true) - $startedAt];
         }
+    }
+
+    private static function userAgent(): string
+    {
+        return sprintf('1monitor-sdk-php/%s (PHP %s)', self::VERSION, PHP_VERSION);
     }
 
     private static function truncateOutput(string $output): string

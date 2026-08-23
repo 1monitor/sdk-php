@@ -103,6 +103,30 @@ final class RetryTest extends TestCase
 
     public function testTheTimeBudgetIsSharedAcrossAttempts(): void
     {
+        $timeouts = [];
+        $handler = static function (RequestInterface $request, array $options) use (&$timeouts): PromiseInterface {
+            $timeouts[] = $options['timeout'];
+            usleep(30_000);
+
+            return self::respondWith(new Response(500));
+        };
+
+        $client = new Client(
+            timeout: 5.0,
+            retries: 1,
+            httpClient: new GuzzleClient(['handler' => $handler]),
+        );
+
+        $client->ping('tok_abc');
+
+        self::assertCount(2, $timeouts);
+        self::assertSame(5.0, $timeouts[0]);
+        self::assertLessThan(5.0, $timeouts[1], 'the retry only gets what the first attempt left');
+        self::assertGreaterThan(4.9, $timeouts[1]);
+    }
+
+    public function testAttemptsStopOnceTheirTotalTimeSpendsTheBudget(): void
+    {
         $attempts = 0;
         $handler = static function (RequestInterface $request, array $options) use (&$attempts): PromiseInterface {
             $attempts++;

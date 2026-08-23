@@ -148,7 +148,7 @@ $client = new OneMonitor\Sdk\Client(
 | `timeout` | `float` | `5.0` | Seconds of network time **shared across all attempts** — see below. |
 | `retries` | `int` | `2` | Extra attempts after the first one fails. `0` disables retrying. |
 | `logger` | `?Psr\Log\LoggerInterface` | none | Where failed pings are reported. Without one, failures are silent. |
-| `httpClient` | `?Psr\Http\Client\ClientInterface` | Guzzle, configured with `timeout` | Any [PSR-18](https://www.php-fig.org/psr/psr-18/) client — for a proxy, custom TLS, or a different HTTP stack. |
+| `httpClient` | `?Psr\Http\Client\ClientInterface` | a plain Guzzle client | Any [PSR-18](https://www.php-fig.org/psr/psr-18/) client — for a proxy, custom TLS, or a different HTTP stack. A Guzzle client gets extra care — see below. |
 | `requestFactory` | `?Psr\Http\Message\RequestFactoryInterface` | `guzzlehttp/psr7` | Builds the ping requests (PSR-17). |
 | `streamFactory` | `?Psr\Http\Message\StreamFactoryInterface` | `guzzlehttp/psr7` | Builds the output body streams (PSR-17). |
 
@@ -160,7 +160,14 @@ $client = new OneMonitor\Sdk\Client(
 
 That is deliberate. If `timeout` only limited single attempts, three attempts against a hanging endpoint would block for 3 × 5 s plus backoff — around 16.5 s of your job's runtime spent on monitoring. The shared budget keeps the worst case flat no matter how many retries you allow.
 
-The per-attempt socket timeout belongs to the HTTP client — [PSR-18](https://www.php-fig.org/psr/psr-18/) has no per-request options. The default client is configured with `timeout` for it, so a hanging endpoint spends the whole budget on the first attempt and no retry starts. If you inject your own client, set its socket timeouts yourself; the SDK still refuses to start a retry once the budget is spent, but it cannot cut short an attempt already in flight.
+### Guzzle clients vs. other PSR-18 clients
+
+The SDK drives a Guzzle client — the default, or any injected one — through Guzzle's own request API rather than its PSR-18 adapter, because the adapter supports neither per-request timeouts nor redirects. With Guzzle you therefore get the full guarantees: each attempt's socket timeout is the *remaining* budget (so the 6.5 s worst case above holds), and redirects are followed.
+
+With a non-Guzzle PSR-18 client, two things are yours to handle:
+
+- **Socket timeouts** — PSR-18 has no per-request options, so configure them on the client. The SDK still refuses to start a retry once the budget is spent, but it cannot cut short an attempt already in flight; a hanging endpoint can then hold the job for one full attempt beyond the budget.
+- **Redirects** — followed only if your client follows them. A `3xx` reaching the SDK counts as a failed ping and is not retried, so point `baseUrl` directly at the ping endpoint over `https`.
 
 ### What gets retried
 
