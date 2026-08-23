@@ -5,6 +5,12 @@
     "license": "MIT",
     "keywords": ["1monitor", "monitoring", "cron", "heartbeat", "ping", "uptime", "observability"],
     "homepage": "https://1monitor.io",
+    "authors": [
+        {
+            "name": "Lukáš Břečka",
+            "email": "lukas.brecka85@gmail.com"
+        }
+    ],
     "support": {
         "issues": "https://github.com/1monitor/sdk-php/issues",
         "source": "https://github.com/1monitor/sdk-php"
