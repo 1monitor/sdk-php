@@ -12,6 +12,7 @@ While the package is at `0.x`, minor releases may contain breaking changes.
 
 - **Breaking:** the `httpClient` constructor option now takes any PSR-18 `Psr\Http\Client\ClientInterface` instead of `GuzzleHttp\ClientInterface`. Guzzle remains the default implementation; new optional `requestFactory` and `streamFactory` options accept PSR-17 factories (default: `guzzlehttp/psr7`).
 - The per-attempt socket timeout now belongs to the HTTP client (PSR-18 has no per-request options). The default client is configured with `timeout`; injected clients must bring their own socket timeouts. The overall time budget still prevents a retry from starting once it is spent.
+- The `User-Agent` header now includes the PHP version, e.g. `1monitor-sdk-php/0.2.0 (PHP 8.3.6)`.
 
 ## [0.2.0] - 2026-08-08
 

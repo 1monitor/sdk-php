@@ -183,7 +183,10 @@ final class ClientTest extends TestCase
 
         $client->ping('tok_abc');
 
-        self::assertSame('1monitor-sdk-php/' . Client::VERSION, $requests[0]->getHeaderLine('User-Agent'));
+        self::assertSame(
+            sprintf('1monitor-sdk-php/%s (PHP %s)', Client::VERSION, PHP_VERSION),
+            $requests[0]->getHeaderLine('User-Agent'),
+        );
     }
 
     public function testNoContentCountsAsDelivered(): void

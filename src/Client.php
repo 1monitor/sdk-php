@@ -202,7 +202,7 @@ final class Client
 
         $request = $this->requestFactory
             ->createRequest($body === null ? 'GET' : 'POST', $url)
-            ->withHeader('User-Agent', '1monitor-sdk-php/' . self::VERSION);
+            ->withHeader('User-Agent', sprintf('1monitor-sdk-php/%s (PHP %s)', self::VERSION, PHP_VERSION));
 
         if ($body !== null) {
             $request = $request
