@@ -1,0 +1,41 @@
+name: Bug report
+description: Something in the SDK does not work as documented.
+labels: [bug]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: How to reproduce
+      description: The smallest snippet that shows the problem. Remove real ping tokens.
+      render: php
+
+  - type: input
+    id: sdk-version
+    attributes:
+      label: SDK version
+      placeholder: "0.2.0"
+    validations:
+      required: true
+
+  - type: input
+    id: php-version
+    attributes:
+      label: PHP version
+      placeholder: "8.3.6"
+    validations:
+      required: true
+
+  - type: input
+    id: http-client
+    attributes:
+      label: HTTP client
+      description: The PSR-18 client in use, if you inject one.
+      placeholder: guzzlehttp/guzzle 8.0.2 (default)

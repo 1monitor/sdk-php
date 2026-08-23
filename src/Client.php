@@ -5,10 +5,14 @@ declare(strict_types=1);
 namespace OneMonitor\Sdk;
 
 use GuzzleHttp\Client as GuzzleClient;
-use GuzzleHttp\ClientInterface;
+use GuzzleHttp\ClientInterface as GuzzleClientInterface;
 use GuzzleHttp\Exception\BadResponseException;
 use GuzzleHttp\Exception\RequestException;
+use GuzzleHttp\Psr7\HttpFactory;
 use OneMonitor\Sdk\Exception\InvalidArgumentException;
+use Psr\Http\Client\ClientInterface;
+use Psr\Http\Message\RequestFactoryInterface;
+use Psr\Http\Message\StreamFactoryInterface;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 use Throwable;
@@ -42,9 +46,17 @@ final class Client
 
     private readonly ClientInterface $httpClient;
 
+    private readonly RequestFactoryInterface $requestFactory;
+
+    private readonly StreamFactoryInterface $streamFactory;
+
     /**
-     * @param float $timeout Overall deadline for one ping across all attempts, in seconds.
-     * @param int   $retries Extra attempts after the first one fails. 0 disables retrying.
+     * @param float $timeout Overall deadline for one ping across all attempts,
+     *     in seconds. With the default (or any Guzzle) client it is enforced
+     *     per attempt too; a non-Guzzle PSR-18 client brings its own socket
+     *     timeouts (PSR-18 has no per-request options), and the budget then
+     *     only prevents further retries from starting.
+     * @param int $retries Extra attempts after the first one fails. 0 disables retrying.
      *
      * @throws InvalidArgumentException
      */
@@ -54,6 +66,8 @@ final class Client
         private readonly int $retries = self::DEFAULT_RETRIES,
         ?LoggerInterface $logger = null,
         ?ClientInterface $httpClient = null,
+        ?RequestFactoryInterface $requestFactory = null,
+        ?StreamFactoryInterface $streamFactory = null,
     ) {
         if ($timeout <= 0) {
             throw new InvalidArgumentException(sprintf('Timeout must be greater than 0, %s given.', $timeout));
@@ -66,6 +80,10 @@ final class Client
         $this->baseUrl = self::normalizeBaseUrl($baseUrl);
         $this->logger = $logger ?? new NullLogger();
         $this->httpClient = $httpClient ?? new GuzzleClient();
+
+        $factory = new HttpFactory();
+        $this->requestFactory = $requestFactory ?? $factory;
+        $this->streamFactory = $streamFactory ?? $factory;
     }
 
     /**
@@ -133,7 +151,9 @@ final class Client
 
         // The timeout is a budget for time spent on the wire, spread across all
         // attempts, so that retrying cannot multiply how long the monitored job
-        // is held up. Backoff sleeps are deliberately outside the budget.
+        // is held up: no retry starts once the budget is spent, and a Guzzle
+        // client additionally gets the remaining budget as each attempt's
+        // socket timeout. Backoff sleeps are deliberately outside the budget.
         $budget = $this->timeout;
         $maxAttempts = $this->retries + 1;
 
@@ -173,15 +193,35 @@ final class Client
     /**
      * One HTTP attempt.
      *
+     * A Guzzle client — the default, or any injected one — is driven through
+     * `request()` so the remaining budget caps this attempt's socket timeout
+     * and redirects are followed. Guzzle's own PSR-18 adapter offers neither:
+     * PSR-18 has no per-request options and its `sendRequest()` disables
+     * redirect following.
+     *
      * @return array{0: int|null, 1: Throwable|null, 2: float} status (null on transport
      *     failure), the error if any, and seconds spent
      */
     private function attempt(string $url, ?string $body, float $budget): array
     {
+        if ($this->httpClient instanceof GuzzleClientInterface) {
+            return $this->attemptWithGuzzle($this->httpClient, $url, $body, $budget);
+        }
+
+        return $this->attemptWithPsr18($url, $body);
+    }
+
+    /** @return array{0: int|null, 1: Throwable|null, 2: float} */
+    private function attemptWithGuzzle(
+        GuzzleClientInterface $client,
+        string $url,
+        ?string $body,
+        float $budget,
+    ): array {
         $startedAt = microtime(true);
 
         $headers = [
-            'User-Agent' => '1monitor-sdk-php/' . self::VERSION,
+            'User-Agent' => self::userAgent(),
         ];
 
         $options = [
@@ -198,7 +238,7 @@ final class Client
         $options['headers'] = $headers;
 
         try {
-            $response = $this->httpClient->request($body === null ? 'GET' : 'POST', $url, $options);
+            $response = $client->request($body === null ? 'GET' : 'POST', $url, $options);
 
             return [$response->getStatusCode(), null, microtime(true) - $startedAt];
         } catch (RequestException $e) {
@@ -210,6 +250,37 @@ final class Client
         } catch (Throwable $e) {
             return [null, $e, microtime(true) - $startedAt];
         }
+    }
+
+    /** @return array{0: int|null, 1: Throwable|null, 2: float} */
+    private function attemptWithPsr18(string $url, ?string $body): array
+    {
+        $startedAt = microtime(true);
+
+        $request = $this->requestFactory
+            ->createRequest($body === null ? 'GET' : 'POST', $url)
+            ->withHeader('User-Agent', self::userAgent());
+
+        if ($body !== null) {
+            $request = $request
+                ->withHeader('Content-Type', 'text/plain; charset=utf-8')
+                ->withBody($this->streamFactory->createStream($body));
+        }
+
+        try {
+            $response = $this->httpClient->sendRequest($request);
+
+            return [$response->getStatusCode(), null, microtime(true) - $startedAt];
+        } catch (Throwable $e) {
+            // PSR-18 forbids throwing on HTTP error statuses, so anything
+            // caught here is a transport failure with no response to inspect.
+            return [null, $e, microtime(true) - $startedAt];
+        }
+    }
+
+    private static function userAgent(): string
+    {
+        return sprintf('1monitor-sdk-php/%s (PHP %s)', self::VERSION, PHP_VERSION);
     }
 
     private static function truncateOutput(string $output): string

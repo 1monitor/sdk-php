@@ -1,0 +1,41 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  version-check:
+    name: Tag matches Client::VERSION
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          coverage: none
+
+      - name: Compare tag with Client::VERSION
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          VERSION="$(php -r "require 'src/Client.php'; echo OneMonitor\Sdk\Client::VERSION;")"
+          if [ "$TAG" != "$VERSION" ]; then
+            echo "Tag v$TAG does not match Client::VERSION ($VERSION). Bump the constant before tagging." >&2
+            exit 1
+          fi
+          echo "Tag v$TAG matches Client::VERSION."
+
+      - name: Check the changelog has a section for this version
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          if ! grep -q "^## \[$TAG\]" CHANGELOG.md; then
+            echo "CHANGELOG.md has no \"## [$TAG]\" section. Move the Unreleased entries before tagging." >&2
+            exit 1
+          fi
+          echo "CHANGELOG.md documents $TAG."

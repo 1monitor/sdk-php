@@ -125,6 +125,26 @@ final class RetryTest extends TestCase
         self::assertGreaterThan(4.9, $timeouts[1]);
     }
 
+    public function testAttemptsStopOnceTheirTotalTimeSpendsTheBudget(): void
+    {
+        $attempts = 0;
+        $handler = static function (RequestInterface $request, array $options) use (&$attempts): PromiseInterface {
+            $attempts++;
+            usleep(60_000);
+
+            return self::respondWith(new Response(500));
+        };
+
+        $client = new Client(
+            timeout: 0.1,
+            retries: 5,
+            httpClient: new GuzzleClient(['handler' => $handler]),
+        );
+
+        self::assertFalse($client->ping('tok_abc'));
+        self::assertSame(2, $attempts, 'the two attempts together spend the budget, so the other retries never start');
+    }
+
     /**
      * Typed as the promise a Guzzle handler must produce; inferring the type
      * from a concrete Response would not satisfy the invariant template.

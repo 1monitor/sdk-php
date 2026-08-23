@@ -8,6 +8,12 @@ While the package is at `0.x`, minor releases may contain breaking changes.
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** the `httpClient` constructor option now takes any PSR-18 `Psr\Http\Client\ClientInterface` instead of `GuzzleHttp\ClientInterface`. Guzzle remains the default implementation; new optional `requestFactory` and `streamFactory` options accept PSR-17 factories (default: `guzzlehttp/psr7`).
+- A Guzzle client — the default, or any injected one — is driven through Guzzle's request API instead of its PSR-18 adapter, preserving the previous behavior: each attempt's socket timeout is the remaining time budget, and redirects are followed. A non-Guzzle PSR-18 client brings its own socket timeouts and redirect policy (PSR-18 has no per-request options); the budget then only prevents further retries from starting, and an unfollowed `3xx` counts as a failed ping.
+- The `User-Agent` header now includes the PHP version, e.g. `1monitor-sdk-php/0.2.0 (PHP 8.3.6)`.
+
 ## [0.2.0] - 2026-08-08
 
 ### Added

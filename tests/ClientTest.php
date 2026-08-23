@@ -15,7 +15,9 @@ use OneMonitor\Sdk\Client;
 use OneMonitor\Sdk\Exception\InvalidArgumentException;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
+use Psr\Http\Client\ClientInterface;
 use Psr\Http\Message\RequestInterface;
+use Psr\Http\Message\ResponseInterface;
 use RuntimeException;
 use Throwable;
 
@@ -181,7 +183,10 @@ final class ClientTest extends TestCase
 
         $client->ping('tok_abc');
 
-        self::assertSame('1monitor-sdk-php/' . Client::VERSION, $requests[0]->getHeaderLine('User-Agent'));
+        self::assertSame(
+            sprintf('1monitor-sdk-php/%s (PHP %s)', Client::VERSION, PHP_VERSION),
+            $requests[0]->getHeaderLine('User-Agent'),
+        );
     }
 
     public function testNoContentCountsAsDelivered(): void
@@ -235,6 +240,64 @@ final class ClientTest extends TestCase
         );
 
         self::assertFalse($client->ping('tok_abc'));
+    }
+
+    public function testAGuzzleClientFollowsRedirects(): void
+    {
+        $requests = [];
+        $client = self::clientFor(
+            [
+                new Response(301, ['Location' => 'https://ping.1monitor.io/ping/tok_abc']),
+                new Response(200),
+            ],
+            $requests,
+        );
+
+        self::assertTrue($client->ping('tok_abc'));
+        self::assertCount(2, $requests, 'the redirect must be followed, not treated as a failure');
+    }
+
+    public function testAPsr18ClientReportsARedirectAsAFailureWithoutRetrying(): void
+    {
+        $attempts = 0;
+        $httpClient = new class ($attempts) implements ClientInterface {
+            /** @param int $attempts counted by reference */
+            public function __construct(private int &$attempts)
+            {
+            }
+
+            public function sendRequest(RequestInterface $request): ResponseInterface
+            {
+                $this->attempts++;
+
+                return new Response(301, ['Location' => 'https://elsewhere.example']);
+            }
+        };
+
+        $client = new Client(httpClient: $httpClient);
+
+        self::assertFalse($client->ping('tok_abc'));
+        self::assertSame(1, $attempts, 'a redirect is not transient, so it must not be retried');
+    }
+
+    public function testAnyPsr18ClientCanBeInjected(): void
+    {
+        $httpClient = new class implements ClientInterface {
+            public ?RequestInterface $lastRequest = null;
+
+            public function sendRequest(RequestInterface $request): ResponseInterface
+            {
+                $this->lastRequest = $request;
+
+                return new Response(200);
+            }
+        };
+
+        $client = new Client(httpClient: $httpClient);
+
+        self::assertTrue($client->ping('tok_abc'));
+        self::assertNotNull($httpClient->lastRequest);
+        self::assertSame('https://ping.1monitor.io/ping/tok_abc', (string) $httpClient->lastRequest->getUri());
     }
 
     public function testFailureIsReportedToTheLogger(): void
