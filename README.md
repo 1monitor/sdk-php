@@ -148,15 +148,19 @@ $client = new OneMonitor\Sdk\Client(
 | `timeout` | `float` | `5.0` | Seconds of network time **shared across all attempts** — see below. |
 | `retries` | `int` | `2` | Extra attempts after the first one fails. `0` disables retrying. |
 | `logger` | `?Psr\Log\LoggerInterface` | none | Where failed pings are reported. Without one, failures are silent. |
-| `httpClient` | `?GuzzleHttp\ClientInterface` | a plain Guzzle client | Bring your own — for a proxy, custom TLS, or per-monitor ping constraints. |
+| `httpClient` | `?Psr\Http\Client\ClientInterface` | Guzzle, configured with `timeout` | Any [PSR-18](https://www.php-fig.org/psr/psr-18/) client — for a proxy, custom TLS, or a different HTTP stack. |
+| `requestFactory` | `?Psr\Http\Message\RequestFactoryInterface` | `guzzlehttp/psr7` | Builds the ping requests (PSR-17). |
+| `streamFactory` | `?Psr\Http\Message\StreamFactoryInterface` | `guzzlehttp/psr7` | Builds the output body streams (PSR-17). |
 
 **Maximum time a ping can hold up your job: `timeout` + backoff sleeps — about 6.5 s with the defaults** (5 s of network time, plus 0.5 s and 1 s between the three attempts).
 
 ### Why `timeout` is a budget, not a per-attempt limit
 
-`timeout` is an overall deadline for time spent on the wire. The first attempt may use all of it; a retry gets only what is left, and no retry starts once the budget is gone.
+`timeout` is an overall deadline for time spent on the wire. Attempts draw it down as they run, and no retry starts once the budget is gone.
 
-That is deliberate. If `timeout` were per-attempt, three attempts against a hanging endpoint would block for 3 × 5 s plus backoff — around 16.5 s of your job's runtime spent on monitoring. The shared budget keeps the worst case flat no matter how many retries you allow.
+That is deliberate. If `timeout` only limited single attempts, three attempts against a hanging endpoint would block for 3 × 5 s plus backoff — around 16.5 s of your job's runtime spent on monitoring. The shared budget keeps the worst case flat no matter how many retries you allow.
+
+The per-attempt socket timeout belongs to the HTTP client — [PSR-18](https://www.php-fig.org/psr/psr-18/) has no per-request options. The default client is configured with `timeout` for it, so a hanging endpoint spends the whole budget on the first attempt and no retry starts. If you inject your own client, set its socket timeouts yourself; the SDK still refuses to start a retry once the budget is spent, but it cannot cut short an attempt already in flight.
 
 ### What gets retried
 
@@ -164,11 +168,12 @@ Only connection failures and `5xx` responses. A `4xx` is a decision, not a hiccu
 
 ### Ping constraints
 
-If a monitor requires a specific HTTP method or header, configure a Guzzle client with them and inject it:
+If a monitor requires a specific HTTP method or header, inject an HTTP client configured with them — any PSR-18 client works, Guzzle shown here:
 
 ```php
 $client = new OneMonitor\Sdk\Client(
     httpClient: new GuzzleHttp\Client([
+        'timeout' => 5.0,
         'headers' => ['X-Deploy-Key' => 'secret'],
     ]),
 );

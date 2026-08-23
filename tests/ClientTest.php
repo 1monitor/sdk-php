@@ -15,7 +15,9 @@ use OneMonitor\Sdk\Client;
 use OneMonitor\Sdk\Exception\InvalidArgumentException;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
+use Psr\Http\Client\ClientInterface;
 use Psr\Http\Message\RequestInterface;
+use Psr\Http\Message\ResponseInterface;
 use RuntimeException;
 use Throwable;
 
@@ -235,6 +237,26 @@ final class ClientTest extends TestCase
         );
 
         self::assertFalse($client->ping('tok_abc'));
+    }
+
+    public function testAnyPsr18ClientCanBeInjected(): void
+    {
+        $httpClient = new class implements ClientInterface {
+            public ?RequestInterface $lastRequest = null;
+
+            public function sendRequest(RequestInterface $request): ResponseInterface
+            {
+                $this->lastRequest = $request;
+
+                return new Response(200);
+            }
+        };
+
+        $client = new Client(httpClient: $httpClient);
+
+        self::assertTrue($client->ping('tok_abc'));
+        self::assertNotNull($httpClient->lastRequest);
+        self::assertSame('https://ping.1monitor.io/ping/tok_abc', (string) $httpClient->lastRequest->getUri());
     }
 
     public function testFailureIsReportedToTheLogger(): void

@@ -5,10 +5,11 @@ declare(strict_types=1);
 namespace OneMonitor\Sdk;
 
 use GuzzleHttp\Client as GuzzleClient;
-use GuzzleHttp\ClientInterface;
-use GuzzleHttp\Exception\BadResponseException;
-use GuzzleHttp\Exception\RequestException;
+use GuzzleHttp\Psr7\HttpFactory;
 use OneMonitor\Sdk\Exception\InvalidArgumentException;
+use Psr\Http\Client\ClientInterface;
+use Psr\Http\Message\RequestFactoryInterface;
+use Psr\Http\Message\StreamFactoryInterface;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
 use Throwable;
@@ -42,9 +43,17 @@ final class Client
 
     private readonly ClientInterface $httpClient;
 
+    private readonly RequestFactoryInterface $requestFactory;
+
+    private readonly StreamFactoryInterface $streamFactory;
+
     /**
-     * @param float $timeout Overall deadline for one ping across all attempts, in seconds.
-     * @param int   $retries Extra attempts after the first one fails. 0 disables retrying.
+     * @param float $timeout Time budget for one ping across all attempts, in
+     *     seconds. A retry never starts once it is spent. It is also the
+     *     per-attempt socket timeout of the default HTTP client; an injected
+     *     PSR-18 client brings its own socket timeouts (PSR-18 has no
+     *     per-request options), so configure them there too.
+     * @param int $retries Extra attempts after the first one fails. 0 disables retrying.
      *
      * @throws InvalidArgumentException
      */
@@ -54,6 +63,8 @@ final class Client
         private readonly int $retries = self::DEFAULT_RETRIES,
         ?LoggerInterface $logger = null,
         ?ClientInterface $httpClient = null,
+        ?RequestFactoryInterface $requestFactory = null,
+        ?StreamFactoryInterface $streamFactory = null,
     ) {
         if ($timeout <= 0) {
             throw new InvalidArgumentException(sprintf('Timeout must be greater than 0, %s given.', $timeout));
@@ -65,7 +76,14 @@ final class Client
 
         $this->baseUrl = self::normalizeBaseUrl($baseUrl);
         $this->logger = $logger ?? new NullLogger();
-        $this->httpClient = $httpClient ?? new GuzzleClient();
+        $this->httpClient = $httpClient ?? new GuzzleClient([
+            'timeout' => $timeout,
+            'connect_timeout' => $timeout,
+        ]);
+
+        $factory = new HttpFactory();
+        $this->requestFactory = $requestFactory ?? $factory;
+        $this->streamFactory = $streamFactory ?? $factory;
     }
 
     /**
@@ -133,7 +151,9 @@ final class Client
 
         // The timeout is a budget for time spent on the wire, spread across all
         // attempts, so that retrying cannot multiply how long the monitored job
-        // is held up. Backoff sleeps are deliberately outside the budget.
+        // is held up: no retry starts once the budget is spent. The per-attempt
+        // socket timeout belongs to the HTTP client (PSR-18 has no per-request
+        // options); backoff sleeps are deliberately outside the budget.
         $budget = $this->timeout;
         $maxAttempts = $this->retries + 1;
 
@@ -144,7 +164,7 @@ final class Client
         while ($attempt < $maxAttempts) {
             $attempt++;
 
-            [$status, $error, $elapsed] = $this->attempt($url, $body, $budget);
+            [$status, $error, $elapsed] = $this->attempt($url, $body);
             $budget -= $elapsed;
 
             if ($status !== null && $status >= 200 && $status < 300) {
@@ -176,38 +196,27 @@ final class Client
      * @return array{0: int|null, 1: Throwable|null, 2: float} status (null on transport
      *     failure), the error if any, and seconds spent
      */
-    private function attempt(string $url, ?string $body, float $budget): array
+    private function attempt(string $url, ?string $body): array
     {
         $startedAt = microtime(true);
 
-        $headers = [
-            'User-Agent' => '1monitor-sdk-php/' . self::VERSION,
-        ];
-
-        $options = [
-            'timeout' => $budget,
-            'connect_timeout' => $budget,
-            'http_errors' => false,
-        ];
+        $request = $this->requestFactory
+            ->createRequest($body === null ? 'GET' : 'POST', $url)
+            ->withHeader('User-Agent', '1monitor-sdk-php/' . self::VERSION);
 
         if ($body !== null) {
-            $headers['Content-Type'] = 'text/plain; charset=utf-8';
-            $options['body'] = $body;
+            $request = $request
+                ->withHeader('Content-Type', 'text/plain; charset=utf-8')
+                ->withBody($this->streamFactory->createStream($body));
         }
 
-        $options['headers'] = $headers;
-
         try {
-            $response = $this->httpClient->request($body === null ? 'GET' : 'POST', $url, $options);
+            $response = $this->httpClient->sendRequest($request);
 
             return [$response->getStatusCode(), null, microtime(true) - $startedAt];
-        } catch (RequestException $e) {
-            // Guzzle 7 keeps the response on RequestException, Guzzle 8 only on
-            // BadResponseException; the latter is the shape both majors share.
-            $response = $e instanceof BadResponseException ? $e->getResponse() : null;
-
-            return [$response?->getStatusCode(), $e, microtime(true) - $startedAt];
         } catch (Throwable $e) {
+            // PSR-18 forbids throwing on HTTP error statuses, so anything
+            // caught here is a transport failure with no response to inspect.
             return [null, $e, microtime(true) - $startedAt];
         }
     }
