@@ -3,7 +3,7 @@ name: CI
 on:
   push:
     branches: [master]
-    tags: ['v*']
+    tags: ['[0-9]*', 'v[0-9]*']
   pull_request:
 
 permissions:
@@ -35,6 +35,19 @@ jobs:
 
       - name: Audit dependencies
         run: composer audit
+
+  dependency-review:
+    name: Dependency review
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' && !github.event.repository.private
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Review dependency changes
+        uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: moderate
 
   check:
     name: PHP ${{ matrix.php }} — ${{ matrix.script }}

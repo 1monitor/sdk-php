@@ -10,7 +10,7 @@ use GuzzleHttp\Exception\BadResponseException;
 use GuzzleHttp\Exception\RequestException;
 use GuzzleHttp\Psr7\HttpFactory;
 use OneMonitor\Sdk\Exception\InvalidArgumentException;
-use Psr\Http\Client\ClientInterface;
+use Psr\Http\Client\ClientInterface as HttpClientInterface;
 use Psr\Http\Message\RequestFactoryInterface;
 use Psr\Http\Message\StreamFactoryInterface;
 use Psr\Log\LoggerInterface;
@@ -23,7 +23,7 @@ use Throwable;
  * Delivery never throws: every ping method returns `true` when 1Monitor
  * accepted the ping and `false` otherwise. Only misconfiguration throws.
  */
-final class Client
+final class Client implements ClientInterface
 {
     public const VERSION = '0.3.0';
 
@@ -40,17 +40,34 @@ final class Client
     /** Seconds to wait before retry N; the last entry repeats for further retries. */
     private const BACKOFF_SECONDS = [0.5, 1.0];
 
+    /** Guzzle only: how many redirects one attempt may follow. */
+    private const MAX_REDIRECTS = 5;
+
+    /** Replaces the ping token wherever it would otherwise reach the log. */
+    private const REDACTED = '[redacted]';
+
     private readonly string $baseUrl;
+
+    /**
+     * Guzzle only: schemes a redirect may lead to. An `https` base URL never
+     * downgrades to `http`, so the token cannot be sent in clear text.
+     *
+     * @var list<string>
+     */
+    private readonly array $redirectProtocols;
 
     private readonly LoggerInterface $logger;
 
-    private readonly ClientInterface $httpClient;
+    private readonly HttpClientInterface $httpClient;
 
     private readonly RequestFactoryInterface $requestFactory;
 
     private readonly StreamFactoryInterface $streamFactory;
 
     /**
+     * @param string $baseUrl Where pings are sent. An `http` or `https` URL
+     *     with an optional path; credentials, a query string or a fragment
+     *     are rejected.
      * @param float $timeout Overall deadline for one ping across all attempts,
      *     in seconds. With the default (or any Guzzle) client it is enforced
      *     per attempt too; a non-Guzzle PSR-18 client brings its own socket
@@ -65,12 +82,14 @@ final class Client
         private readonly float $timeout = self::DEFAULT_TIMEOUT,
         private readonly int $retries = self::DEFAULT_RETRIES,
         ?LoggerInterface $logger = null,
-        ?ClientInterface $httpClient = null,
+        ?HttpClientInterface $httpClient = null,
         ?RequestFactoryInterface $requestFactory = null,
         ?StreamFactoryInterface $streamFactory = null,
     ) {
-        if ($timeout <= 0) {
-            throw new InvalidArgumentException(sprintf('Timeout must be greater than 0, %s given.', $timeout));
+        if (!is_finite($timeout) || $timeout <= 0) {
+            throw new InvalidArgumentException(
+                sprintf('Timeout must be a finite number greater than 0, %s given.', var_export($timeout, true)),
+            );
         }
 
         if ($retries < 0) {
@@ -78,6 +97,7 @@ final class Client
         }
 
         $this->baseUrl = self::normalizeBaseUrl($baseUrl);
+        $this->redirectProtocols = str_starts_with($this->baseUrl, 'https://') ? ['https'] : ['http', 'https'];
         $this->logger = $logger ?? new NullLogger();
         $this->httpClient = $httpClient ?? new GuzzleClient();
 
@@ -86,50 +106,21 @@ final class Client
         $this->streamFactory = $streamFactory ?? $factory;
     }
 
-    /**
-     * Records a liveness ping — the job is alive.
-     *
-     * @param int|null    $exitCode The job's exit code; values outside 0–255 are ignored by the server.
-     * @param string|null $output   The job's output, sent as the request body; an empty string sends none.
-     *
-     * @throws InvalidArgumentException on an empty token
-     */
     public function ping(string $token, ?int $exitCode = null, ?string $output = null): bool
     {
         return $this->send($token, PingState::Ping, $exitCode, $output);
     }
 
-    /**
-     * Opens a run — the job has started.
-     *
-     * @throws InvalidArgumentException on an empty token
-     */
     public function pingStart(string $token): bool
     {
         return $this->send($token, PingState::Start, null, null);
     }
 
-    /**
-     * Closes the open run as successful.
-     *
-     * @param int|null    $exitCode The job's exit code; values outside 0–255 are ignored by the server.
-     * @param string|null $output   The job's output, sent as the request body; an empty string sends none.
-     *
-     * @throws InvalidArgumentException on an empty token
-     */
     public function pingSuccess(string $token, ?int $exitCode = null, ?string $output = null): bool
     {
         return $this->send($token, PingState::Success, $exitCode, $output);
     }
 
-    /**
-     * Closes the open run as failed.
-     *
-     * @param int|null    $exitCode The job's exit code; values outside 0–255 are ignored by the server.
-     * @param string|null $output   The job's output, sent as the request body; an empty string sends none.
-     *
-     * @throws InvalidArgumentException on an empty token
-     */
     public function pingFail(string $token, ?int $exitCode = null, ?string $output = null): bool
     {
         return $this->send($token, PingState::Fail, $exitCode, $output);
@@ -179,12 +170,16 @@ final class Client
             $this->sleepBeforeRetry($attempt);
         }
 
+        // The token is a credential, so neither it nor anything that carries it
+        // may reach the log: the exception object is not passed on (HTTP client
+        // exceptions embed the request and its URL) and its message is redacted.
         $this->logger->error('1Monitor ping failed.', [
             'state' => $state->value,
             'baseUrl' => $this->baseUrl,
             'attempts' => $attempt,
             'status' => $status,
-            'exception' => $error,
+            'error' => $error === null ? null : $error::class,
+            'reason' => $error === null ? null : self::redact($error->getMessage(), $token),
         ]);
 
         return false;
@@ -228,6 +223,10 @@ final class Client
             'timeout' => $budget,
             'connect_timeout' => $budget,
             'http_errors' => false,
+            'allow_redirects' => [
+                'max' => self::MAX_REDIRECTS,
+                'protocols' => $this->redirectProtocols,
+            ],
         ];
 
         if ($body !== null) {
@@ -283,6 +282,19 @@ final class Client
         return sprintf('1monitor-sdk-php/%s (PHP %s)', self::VERSION, PHP_VERSION);
     }
 
+    /**
+     * Removes the token from a message, in both the raw form and the form it
+     * takes in the request URL.
+     */
+    private static function redact(string $message, string $token): string
+    {
+        return str_replace(
+            array_unique([$token, rawurlencode($token)]),
+            self::REDACTED,
+            $message,
+        );
+    }
+
     private static function truncateOutput(string $output): string
     {
         if (strlen($output) <= self::MAX_OUTPUT_BYTES) {
@@ -321,20 +333,33 @@ final class Client
         usleep((int) round(self::BACKOFF_SECONDS[$index] * 1_000_000));
     }
 
-    /** @throws InvalidArgumentException */
+    /**
+     * Accepts an `http(s)` URL with an optional path. Credentials are rejected
+     * because the base URL is logged on failure; a query string or fragment is
+     * rejected because the ping path is appended to the URL as is.
+     *
+     * @throws InvalidArgumentException
+     */
     private static function normalizeBaseUrl(string $baseUrl): string
     {
         $normalized = rtrim(trim($baseUrl), '/');
-        $scheme = $normalized === '' ? null : parse_url($normalized, PHP_URL_SCHEME);
+        $parts = $normalized === '' ? false : parse_url($normalized);
 
         if (
-            $normalized === ''
+            $parts === false
             || filter_var($normalized, FILTER_VALIDATE_URL) === false
-            || !is_string($scheme)
-            || !in_array(strtolower($scheme), ['http', 'https'], true)
+            || !isset($parts['scheme'], $parts['host'])
+            || !in_array(strtolower($parts['scheme']), ['http', 'https'], true)
+            || isset($parts['user'])
+            || isset($parts['pass'])
+            || isset($parts['query'])
+            || isset($parts['fragment'])
         ) {
             throw new InvalidArgumentException(
-                sprintf('Base URL must be a valid http(s) URL, "%s" given.', $baseUrl),
+                sprintf(
+                    'Base URL must be an http(s) URL without credentials, query or fragment, "%s" given.',
+                    $baseUrl,
+                ),
             );
         }
 

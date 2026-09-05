@@ -2,7 +2,7 @@ name: Release
 
 on:
   push:
-    tags: ['v*']
+    tags: ['[0-9]*', 'v[0-9]*']
 
 permissions:
   contents: read
@@ -24,12 +24,12 @@ jobs:
       - name: Compare tag with Client::VERSION
         run: |
           TAG="${GITHUB_REF_NAME#v}"
-          VERSION="$(php -r "require 'src/Client.php'; echo OneMonitor\Sdk\Client::VERSION;")"
+          VERSION="$(php -r "require 'src/ClientInterface.php'; require 'src/Client.php'; echo OneMonitor\Sdk\Client::VERSION;")"
           if [ "$TAG" != "$VERSION" ]; then
-            echo "Tag v$TAG does not match Client::VERSION ($VERSION). Bump the constant before tagging." >&2
+            echo "Tag $GITHUB_REF_NAME does not match Client::VERSION ($VERSION). Bump the constant before tagging." >&2
             exit 1
           fi
-          echo "Tag v$TAG matches Client::VERSION."
+          echo "Tag $GITHUB_REF_NAME matches Client::VERSION."
 
       - name: Check the changelog has a section for this version
         run: |

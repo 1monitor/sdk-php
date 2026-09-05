@@ -144,7 +144,7 @@ $client = new OneMonitor\Sdk\Client(
 
 | Option | Type | Default | What it does |
 |---|---|---|---|
-| `baseUrl` | `string` | `https://ping.1monitor.io` | Where pings are sent. Must be a valid `http`/`https` URL. |
+| `baseUrl` | `string` | `https://ping.1monitor.io` | Where pings are sent. An `http`/`https` URL with an optional path prefix; credentials, a query string or a fragment are rejected. |
 | `timeout` | `float` | `5.0` | Seconds of network time **shared across all attempts** — see below. |
 | `retries` | `int` | `2` | Extra attempts after the first one fails. `0` disables retrying. |
 | `logger` | `?Psr\Log\LoggerInterface` | none | Where failed pings are reported. Without one, failures are silent. |
@@ -163,6 +163,8 @@ That is deliberate. If `timeout` only limited single attempts, three attempts ag
 ### Guzzle clients vs. other PSR-18 clients
 
 The SDK drives a Guzzle client — the default, or any injected one — through Guzzle's own request API rather than its PSR-18 adapter, because the adapter supports neither per-request timeouts nor redirects. With Guzzle you therefore get the full guarantees: each attempt's socket timeout is the *remaining* budget (so the 6.5 s worst case above holds), and redirects are followed.
+
+Guzzle receives these as per-request options, so they take precedence over whatever the injected client was configured with. A Guzzle client follows at most 5 redirects per attempt and, when `baseUrl` is `https`, refuses a redirect to `http` so the token is never sent in clear text.
 
 With a non-Guzzle PSR-18 client, two things are yours to handle:
 
@@ -200,7 +202,18 @@ if (!$client->pingSuccess($token)) {
 }
 ```
 
-Failures are reported to the PSR-3 logger you pass in, at `error` level, with the state, base URL, attempt count, status code and underlying exception in the context. The ping token is deliberately kept out of the log context — it is a credential. Without a logger, failures are dropped silently.
+Failures are reported to the PSR-3 logger you pass in, at `error` level. The context carries:
+
+| Key | Value |
+|---|---|
+| `state` | `ping`, `start`, `success` or `fail` |
+| `baseUrl` | The configured base URL |
+| `attempts` | How many attempts were made |
+| `status` | The last HTTP status, or `null` on a transport failure |
+| `error` | The class of the last exception, or `null` |
+| `reason` | Its message, or `null` |
+
+The ping token is a credential and is deliberately kept out of the log: the exception object itself is not passed on, because HTTP clients embed the request URL in it, and the token is redacted from the message. Without a logger, failures are dropped silently.
 
 The only exceptions the SDK throws are your own mistakes, caught early and loudly:
 
@@ -210,6 +223,30 @@ The only exceptions the SDK throws are your own mistakes, caught early and loudl
 | `OneMonitor\Sdk\Exception\InvalidArgumentException` | Empty ping token — at the call. |
 
 Both implement `OneMonitor\Sdk\Exception\Exception`, so `catch (OneMonitor\Sdk\Exception\Exception $e)` catches everything this package throws.
+
+## Testing code that pings
+
+`Client` is `final`. Type-hint against `OneMonitor\Sdk\ClientInterface` instead and substitute a test double in your own tests:
+
+```php
+use OneMonitor\Sdk\ClientInterface;
+
+final class NightlyReport
+{
+    public function __construct(private ClientInterface $monitor)
+    {
+    }
+}
+```
+
+The interface declares the same four methods as `Client`.
+
+## Security
+
+- **The ping token is a credential.** Keep it in the environment or a secret store, never in source. It never reaches the SDK's log output.
+- **Use `https`.** The default base URL is `https`, TLS certificates are verified, and a Guzzle client will not follow a redirect that downgrades to `http`. An `http` base URL is accepted for local or self-hosted setups; the token then travels in clear text.
+- **Output is sent as is.** Send diagnostic output, not the job's environment or configuration. 1Monitor sweeps common credential shapes out of stored output, but treat that as a safety net.
+- **Reporting.** Vulnerabilities go through the private process in [SECURITY.md](SECURITY.md), not the public issue tracker.
 
 ## Versioning
 
@@ -231,14 +268,7 @@ Ping only. Management operations — creating, listing or pausing monitors, read
 
 Bug reports and feature requests are welcome in [GitHub Issues](https://github.com/1monitor/sdk-php/issues). Security issues follow a separate process — see [SECURITY.md](SECURITY.md).
 
-Local development:
-
-```bash
-composer install
-composer test   # PHPUnit
-composer stan   # PHPStan, level max
-composer cs     # PHP_CodeSniffer, PSR-12
-```
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the development setup, the checks CI runs, and the design constraints a change must respect.
 
 ## License
 

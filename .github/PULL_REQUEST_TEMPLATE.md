@@ -4,7 +4,6 @@
 
 ## Checklist
 
-- [ ] `composer test` passes
-- [ ] `composer stan` passes
-- [ ] `composer cs` passes
+- [ ] `composer check` passes (coding standards, static analysis, tests)
+- [ ] New behaviour is covered by tests
 - [ ] `CHANGELOG.md` updated under *Unreleased* (user-visible changes only)

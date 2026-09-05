@@ -8,6 +8,17 @@ While the package is at `0.x`, minor releases may contain breaking changes.
 
 ## [Unreleased]
 
+### Added
+
+- `OneMonitor\Sdk\ClientInterface`, implemented by `Client`, so the SDK can be replaced with a test double in your own tests.
+
+### Changed
+
+- **Security:** the failure log entry no longer carries the HTTP client's exception object. Guzzle (and most PSR-18 clients) embed the request, and therefore the ping token, in the exception and its message. The context now holds the exception class under `error` and its message under `reason`, with the token redacted; the `exception` key is gone.
+- **Security:** a Guzzle client no longer follows a redirect from `https` to `http`, so the token cannot be sent in clear text. Redirects are capped at 5 per attempt.
+- `baseUrl` now rejects URLs with credentials (they would be logged on failure), a query string or a fragment (the ping path is appended verbatim). A path prefix is still allowed.
+- `timeout` now rejects `INF` and `NAN` alongside non-positive values.
+
 ## [0.3.0] - 2026-08-24
 
 ### Added
@@ -40,7 +51,7 @@ Initial release.
 - Retries on connection failures and `5xx` only, with 0.5 s / 1 s backoff, bounded by an overall time budget shared across attempts.
 - `OneMonitor\Sdk\Exception\InvalidArgumentException` for misconfiguration and empty tokens.
 
-[Unreleased]: https://github.com/1monitor/sdk-php/compare/v0.3.0...HEAD
-[0.3.0]: https://github.com/1monitor/sdk-php/compare/v0.2.0...v0.3.0
-[0.2.0]: https://github.com/1monitor/sdk-php/compare/v0.1.0...v0.2.0
-[0.1.0]: https://github.com/1monitor/sdk-php/releases/tag/v0.1.0
+[Unreleased]: https://github.com/1monitor/sdk-php/compare/0.3.0...HEAD
+[0.3.0]: https://github.com/1monitor/sdk-php/compare/0.2.0...0.3.0
+[0.2.0]: https://github.com/1monitor/sdk-php/compare/0.1.0...0.2.0
+[0.1.0]: https://github.com/1monitor/sdk-php/releases/tag/0.1.0
