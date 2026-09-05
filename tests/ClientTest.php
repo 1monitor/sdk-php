@@ -12,6 +12,7 @@ use GuzzleHttp\Middleware;
 use GuzzleHttp\Psr7\Request;
 use GuzzleHttp\Psr7\Response;
 use OneMonitor\Sdk\Client;
+use OneMonitor\Sdk\ClientInterface as SdkClientInterface;
 use OneMonitor\Sdk\Exception\InvalidArgumentException;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
@@ -257,6 +258,39 @@ final class ClientTest extends TestCase
         self::assertCount(2, $requests, 'the redirect must be followed, not treated as a failure');
     }
 
+    public function testAGuzzleClientRefusesARedirectFromHttpsToHttp(): void
+    {
+        $requests = [];
+        $client = self::clientFor(
+            [
+                new Response(301, ['Location' => 'http://ping.1monitor.io/ping/tok_abc']),
+                new Response(200),
+            ],
+            $requests,
+        );
+
+        self::assertFalse($client->ping('tok_abc'), 'the token must not be sent in clear text');
+        self::assertCount(1, $requests, 'the downgraded redirect must not be followed');
+        self::assertSame('https', $requests[0]->getUri()->getScheme());
+    }
+
+    public function testAGuzzleClientFollowsAnUpgradeFromHttpToHttps(): void
+    {
+        $requests = [];
+        $client = self::clientFor(
+            [
+                new Response(301, ['Location' => 'https://ping.example.test/ping/tok_abc']),
+                new Response(200),
+            ],
+            $requests,
+            baseUrl: 'http://ping.example.test',
+        );
+
+        self::assertTrue($client->ping('tok_abc'));
+        self::assertCount(2, $requests);
+        self::assertSame('https', $requests[1]->getUri()->getScheme());
+    }
+
     public function testAPsr18ClientReportsARedirectAsAFailureWithoutRetrying(): void
     {
         $attempts = 0;
@@ -327,6 +361,86 @@ final class ClientTest extends TestCase
         self::assertStringNotContainsString('tok_secret', json_encode($logger->records[0]['context']) ?: '');
     }
 
+    public function testATransportErrorMentioningTheUrlIsRedactedBeforeLogging(): void
+    {
+        // Guzzle's real ConnectException messages end with the request URL, and
+        // the exception object itself carries the whole request.
+        $request = new Request('GET', 'https://ping.1monitor.io/ping/tok_secret');
+        $exception = new ConnectException(
+            'cURL error 6: Could not resolve host for https://ping.1monitor.io/ping/tok_secret',
+            $request,
+        );
+
+        $logger = new RecordingLogger();
+        $requests = [];
+        $client = self::clientFor([$exception], $requests, retries: 0, logger: $logger);
+
+        self::assertFalse($client->ping('tok_secret'));
+
+        $context = $logger->records[0]['context'];
+        self::assertSame(ConnectException::class, $context['error']);
+        self::assertSame(
+            'cURL error 6: Could not resolve host for https://ping.1monitor.io/ping/[redacted]',
+            $context['reason'],
+        );
+        self::assertNull($context['status']);
+
+        foreach ($context as $value) {
+            self::assertIsScalar($value ?? '', 'no object that could carry the request may reach the log');
+        }
+    }
+
+    public function testTheUrlEncodedFormOfTheTokenIsRedactedToo(): void
+    {
+        $request = new Request('GET', 'https://ping.1monitor.io/ping/a%20b');
+        $exception = new ConnectException('failed for https://ping.1monitor.io/ping/a%20b', $request);
+
+        $logger = new RecordingLogger();
+        $requests = [];
+        $client = self::clientFor([$exception], $requests, retries: 0, logger: $logger);
+
+        $client->ping('a b');
+
+        self::assertSame(
+            'failed for https://ping.1monitor.io/ping/[redacted]',
+            $logger->records[0]['context']['reason'],
+        );
+    }
+
+    public function testAPsr18TransportErrorIsLoggedWithoutTheException(): void
+    {
+        $httpClient = new class implements ClientInterface {
+            public function sendRequest(RequestInterface $request): ResponseInterface
+            {
+                throw new RuntimeException('socket closed while sending ' . $request->getUri());
+            }
+        };
+
+        $logger = new RecordingLogger();
+        $client = new Client(retries: 0, logger: $logger, httpClient: $httpClient);
+
+        self::assertFalse($client->ping('tok_secret'));
+
+        $context = $logger->records[0]['context'];
+        self::assertSame(RuntimeException::class, $context['error']);
+        self::assertSame(
+            'socket closed while sending https://ping.1monitor.io/ping/[redacted]',
+            $context['reason'],
+        );
+    }
+
+    public function testASuccessfulResponseLeavesNoErrorInTheLog(): void
+    {
+        $logger = new RecordingLogger();
+        $requests = [];
+        $client = self::clientFor([new Response(404)], $requests, retries: 0, logger: $logger);
+
+        $client->ping('tok_abc');
+
+        self::assertNull($logger->records[0]['context']['error']);
+        self::assertNull($logger->records[0]['context']['reason']);
+    }
+
     public function testSuccessIsNotLogged(): void
     {
         $logger = new RecordingLogger();
@@ -393,6 +507,20 @@ final class ClientTest extends TestCase
         yield 'no scheme' => ['ping.1monitor.io'];
         yield 'not a url' => ['not a url at all'];
         yield 'unsupported scheme' => ['ftp://ping.1monitor.io'];
+        yield 'credentials' => ['https://user:secret@ping.1monitor.io'];
+        yield 'user only' => ['https://user@ping.1monitor.io'];
+        yield 'query string' => ['https://ping.1monitor.io/?key=1'];
+        yield 'fragment' => ['https://ping.1monitor.io/#top'];
+    }
+
+    public function testTheBaseUrlMayCarryAPathPrefix(): void
+    {
+        $requests = [];
+        $client = self::clientFor([new Response(200)], $requests, baseUrl: 'https://proxy.example.test/1monitor/');
+
+        $client->ping('tok_abc');
+
+        self::assertSame('https://proxy.example.test/1monitor/ping/tok_abc', (string) $requests[0]->getUri());
     }
 
     #[DataProvider('malformedBaseUrls')]
@@ -403,11 +531,26 @@ final class ClientTest extends TestCase
         new Client(baseUrl: $baseUrl);
     }
 
-    public function testNonPositiveTimeoutThrows(): void
+    /** @return iterable<string, array{float}> */
+    public static function invalidTimeouts(): iterable
+    {
+        yield 'zero' => [0.0];
+        yield 'negative' => [-1.0];
+        yield 'infinite' => [INF];
+        yield 'not a number' => [NAN];
+    }
+
+    #[DataProvider('invalidTimeouts')]
+    public function testInvalidTimeoutThrows(float $timeout): void
     {
         $this->expectException(InvalidArgumentException::class);
 
-        new Client(timeout: 0.0);
+        new Client(timeout: $timeout);
+    }
+
+    public function testTheClientImplementsTheSdkInterface(): void
+    {
+        self::assertInstanceOf(SdkClientInterface::class, new Client());
     }
 
     public function testNegativeRetriesThrow(): void

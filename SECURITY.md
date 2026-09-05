@@ -27,6 +27,15 @@ Please give us a chance to ship a fix before disclosing publicly.
 
 This repository — the PHP SDK. Vulnerabilities in the 1Monitor service itself go to the same addresses; say which one you mean.
 
-## A note on ping tokens
+## How the SDK handles the ping token
 
-A monitor's ping token is a credential: anyone holding it can ping that monitor. The SDK keeps tokens out of its log context for that reason. Keep them in environment variables or a secret store rather than in source, and rotate the monitor's token if one leaks.
+A monitor's ping token is a credential: anyone holding it can ping that monitor. Keep it in environment variables or a secret store rather than in source, and rotate the monitor's token if one leaks.
+
+The SDK is built to keep the token from leaking on its side:
+
+- It never appears in the log context. HTTP client exceptions carry the request URL, so the SDK logs only the exception class and a message with the token redacted, never the exception object.
+- It is never thrown. The only exceptions the SDK raises describe misconfiguration and do not include the token.
+- Over the default Guzzle transport, TLS certificates are verified and a redirect from `https` to `http` is refused, so the token is not downgraded to clear text.
+- Base URLs with embedded credentials are rejected, because the base URL is logged on failure.
+
+Ping output is sent as provided, capped at 10 KB. Send your job's diagnostic output, not its environment or configuration.

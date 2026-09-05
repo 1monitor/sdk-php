@@ -43,7 +43,19 @@
         "test": "phpunit",
         "stan": "phpstan analyse",
         "cs": "phpcs",
-        "cs-fix": "phpcbf"
+        "cs-fix": "phpcbf",
+        "check": [
+            "@cs",
+            "@stan",
+            "@test"
+        ]
+    },
+    "scripts-descriptions": {
+        "test": "Run the test suite",
+        "stan": "Run static analysis",
+        "cs": "Check coding standards",
+        "cs-fix": "Fix coding standards automatically",
+        "check": "Run coding standards, static analysis and tests"
     },
     "config": {
         "sort-packages": true
