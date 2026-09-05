@@ -21,7 +21,7 @@ PHP 8.1 or newer.
 ## Install
 
 ```bash
-composer require 1monitor/sdk-php:^0.3
+composer require 1monitor/sdk-php:^0.4
 ```
 
 ## Quickstart
@@ -253,7 +253,7 @@ The interface declares the same four methods as `Client`.
 This package is at **0.x**, and Composer treats `0.x` minors as breaking. Require it as:
 
 ```json
-"1monitor/sdk-php": "^0.3"
+"1monitor/sdk-php": "^0.4"
 ```
 
 The version is deliberately below `1.0.0`: the SDK's stability promise cannot exceed that of the ping API it wraps, which is not yet formally versioned. `1.0.0` follows once it is.
