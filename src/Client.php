@@ -37,6 +37,13 @@ final class Client implements ClientInterface
      */
     public const MAX_OUTPUT_BYTES = 10 * 1024;
 
+    /**
+     * What the server accepts as a version, after trimming: 1–64 printable,
+     * non-whitespace ASCII characters. Anything else is dropped client-side,
+     * just as the server would drop it.
+     */
+    private const VERSION_PATTERN = '/^[\x21-\x7E]{1,64}$/';
+
     /** Seconds to wait before retry N; the last entry repeats for further retries. */
     private const BACKOFF_SECONDS = [0.5, 1.0];
 
@@ -64,6 +71,8 @@ final class Client implements ClientInterface
 
     private readonly StreamFactoryInterface $streamFactory;
 
+    private readonly ?string $version;
+
     /**
      * @param string $baseUrl Where pings are sent. An `http` or `https` URL
      *     with an optional path; credentials, a query string or a fragment
@@ -74,6 +83,9 @@ final class Client implements ClientInterface
      *     timeouts (PSR-18 has no per-request options), and the budget then
      *     only prevents further retries from starting.
      * @param int $retries Extra attempts after the first one fails. 0 disables retrying.
+     * @param string|null $version Sent with every ping that does not name its
+     *     own version, e.g. the deployed release or commit SHA. An invalid
+     *     value is dropped (and logged at debug) rather than thrown.
      *
      * @throws InvalidArgumentException
      */
@@ -85,6 +97,7 @@ final class Client implements ClientInterface
         ?HttpClientInterface $httpClient = null,
         ?RequestFactoryInterface $requestFactory = null,
         ?StreamFactoryInterface $streamFactory = null,
+        ?string $version = null,
     ) {
         if (!is_finite($timeout) || $timeout <= 0) {
             throw new InvalidArgumentException(
@@ -104,38 +117,64 @@ final class Client implements ClientInterface
         $factory = new HttpFactory();
         $this->requestFactory = $requestFactory ?? $factory;
         $this->streamFactory = $streamFactory ?? $factory;
+        $this->version = $this->normalizeVersion($version);
     }
 
-    public function ping(string $token, ?int $exitCode = null, ?string $output = null): bool
-    {
-        return $this->send($token, PingState::Ping, $exitCode, $output);
+    public function ping(
+        string $token,
+        ?int $exitCode = null,
+        ?string $output = null,
+        ?string $version = null,
+    ): bool {
+        return $this->send($token, PingState::Ping, $exitCode, $output, $version);
     }
 
-    public function pingStart(string $token): bool
+    public function pingStart(string $token, ?string $version = null): bool
     {
-        return $this->send($token, PingState::Start, null, null);
+        return $this->send($token, PingState::Start, null, null, $version);
     }
 
-    public function pingSuccess(string $token, ?int $exitCode = null, ?string $output = null): bool
-    {
-        return $this->send($token, PingState::Success, $exitCode, $output);
+    public function pingSuccess(
+        string $token,
+        ?int $exitCode = null,
+        ?string $output = null,
+        ?string $version = null,
+    ): bool {
+        return $this->send($token, PingState::Success, $exitCode, $output, $version);
     }
 
-    public function pingFail(string $token, ?int $exitCode = null, ?string $output = null): bool
-    {
-        return $this->send($token, PingState::Fail, $exitCode, $output);
+    public function pingFail(
+        string $token,
+        ?int $exitCode = null,
+        ?string $output = null,
+        ?string $version = null,
+    ): bool {
+        return $this->send($token, PingState::Fail, $exitCode, $output, $version);
     }
 
-    private function send(string $token, PingState $state, ?int $exitCode, ?string $output): bool
-    {
+    private function send(
+        string $token,
+        PingState $state,
+        ?int $exitCode,
+        ?string $output,
+        ?string $version,
+    ): bool {
         if (trim($token) === '') {
             throw new InvalidArgumentException('Ping token must not be empty.');
         }
 
         $url = $this->baseUrl . '/ping/' . rawurlencode($token) . $state->pathSuffix();
 
-        if ($exitCode !== null) {
-            $url .= '?exit_code=' . $exitCode;
+        $query = array_filter(
+            [
+                'exit_code' => $exitCode,
+                'version' => $this->normalizeVersion($version) ?? $this->version,
+            ],
+            static fn (int|string|null $value): bool => $value !== null,
+        );
+
+        if ($query !== []) {
+            $url .= '?' . http_build_query($query, '', '&', PHP_QUERY_RFC3986);
         }
 
         $body = $output === null || $output === '' ? null : self::truncateOutput($output);
@@ -293,6 +332,35 @@ final class Client implements ClientInterface
             self::REDACTED,
             $message,
         );
+    }
+
+    /**
+     * Trims a version and checks it against what the server accepts. A blank
+     * version means none; an invalid one is dropped and logged at debug, so a
+     * bad value from config never costs the ping.
+     */
+    private function normalizeVersion(?string $version): ?string
+    {
+        if ($version === null) {
+            return null;
+        }
+
+        $trimmed = trim($version);
+
+        if ($trimmed === '') {
+            return null;
+        }
+
+        if (preg_match(self::VERSION_PATTERN, $trimmed) !== 1) {
+            $this->logger->debug(
+                '1Monitor ping version dropped: it must be 1-64 printable, non-whitespace ASCII characters.',
+                ['version' => $version],
+            );
+
+            return null;
+        }
+
+        return $trimmed;
     }
 
     private static function truncateOutput(string $output): string

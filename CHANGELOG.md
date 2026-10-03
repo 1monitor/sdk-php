@@ -8,6 +8,16 @@ While the package is at `0.x`, minor releases may contain breaking changes.
 
 ## [Unreleased]
 
+### Added
+
+- `ping()`, `pingStart()`, `pingSuccess()` and `pingFail()` accept an optional named `version` argument — the deployed release or commit SHA — sent as the `?version=` query parameter, after `exit_code` when both are present.
+- A `version` constructor option sets a default version for every ping, for example from an `APP_VERSION` environment variable. A version passed to a call overrides it.
+- Versions are trimmed and validated client-side against the server's rule (1–64 printable, non-whitespace ASCII characters). An invalid version is dropped and logged at `debug` level, never thrown; a blank one means none.
+
+### Changed
+
+- **Breaking for implementers of `ClientInterface`:** each method gained the optional `version` parameter, so your own implementations and test doubles must declare it too. Callers are unaffected.
+
 ## [0.4.0] - 2026-09-05
 
 ### Added
