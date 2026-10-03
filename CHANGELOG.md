@@ -8,6 +8,8 @@ While the package is at `0.x`, minor releases may contain breaking changes.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-03
+
 ### Added
 
 - `ping()`, `pingStart()`, `pingSuccess()` and `pingFail()` accept an optional named `version` argument — the deployed release or commit SHA — sent as the `?version=` query parameter, after `exit_code` when both are present.
@@ -63,7 +65,8 @@ Initial release.
 - Retries on connection failures and `5xx` only, with 0.5 s / 1 s backoff, bounded by an overall time budget shared across attempts.
 - `OneMonitor\Sdk\Exception\InvalidArgumentException` for misconfiguration and empty tokens.
 
-[Unreleased]: https://github.com/1monitor/sdk-php/compare/0.4.0...HEAD
+[Unreleased]: https://github.com/1monitor/sdk-php/compare/0.5.0...HEAD
+[0.5.0]: https://github.com/1monitor/sdk-php/compare/0.4.0...0.5.0
 [0.4.0]: https://github.com/1monitor/sdk-php/compare/0.3.0...0.4.0
 [0.3.0]: https://github.com/1monitor/sdk-php/compare/0.2.0...0.3.0
 [0.2.0]: https://github.com/1monitor/sdk-php/compare/0.1.0...0.2.0
