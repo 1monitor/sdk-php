@@ -21,7 +21,7 @@ PHP 8.1 or newer.
 ## Install
 
 ```bash
-composer require 1monitor/sdk-php:^0.4
+composer require 1monitor/sdk-php:^0.5
 ```
 
 ## Quickstart
@@ -83,6 +83,27 @@ The exit code travels as `?exit_code=N`; a non-zero value marks the ping as fail
 
 1Monitor sweeps common credential shapes (tokens, API keys, private keys) out of ping output before storing it, but that is a safety net, not permission: send your job's diagnostic output, not its environment or its config.
 
+### Tagging pings with the deployed version
+
+Every ping can carry the version of the code that sent it — a release number or the deployed commit SHA — so 1Monitor can tell which deploy a run belongs to. Pass it per call:
+
+```php
+$client->pingSuccess($token, version: '1.4.2');
+```
+
+or once, on the client, so every ping carries it without touching the call sites:
+
+```php
+$client = new Client(version: getenv('APP_VERSION') ?: null);
+
+$client->pingStart($token);    // ?version=<APP_VERSION>
+$client->pingSuccess($token);  // ?version=<APP_VERSION>
+```
+
+A version passed to a call overrides the client's. It travels as `?version=…`, after the exit code if there is one.
+
+The version is trimmed and must then be 1–64 printable ASCII characters without whitespace — a SemVer string or a full 40-character SHA both fit. Anything else is dropped rather than thrown, the same way the server would drop it: the ping goes out without it (or with the client's version, when a call's own is the one dropped), and the SDK logs the dropped value at `debug` level. An empty or blank version means none and is not logged.
+
 ### From a cron job
 
 The same pattern as a standalone script, wired into your crontab:
@@ -121,14 +142,14 @@ Keep the token in the environment rather than in the source — it is a credenti
 
 | Method | URL | Meaning |
 |---|---|---|
-| `ping($token, ?$exitCode, ?$output)` | `/ping/{token}` | The job is alive. |
-| `pingStart($token)` | `/ping/{token}/start` | A run has started. |
-| `pingSuccess($token, ?$exitCode, ?$output)` | `/ping/{token}/success` | The open run finished successfully. |
-| `pingFail($token, ?$exitCode, ?$output)` | `/ping/{token}/fail` | The open run failed. |
+| `ping($token, ?$exitCode, ?$output, ?$version)` | `/ping/{token}` | The job is alive. |
+| `pingStart($token, ?$version)` | `/ping/{token}/start` | A run has started. |
+| `pingSuccess($token, ?$exitCode, ?$output, ?$version)` | `/ping/{token}/success` | The open run finished successfully. |
+| `pingFail($token, ?$exitCode, ?$output, ?$version)` | `/ping/{token}/fail` | The open run failed. |
 
 Each returns `bool`: `true` when 1Monitor accepted the ping, `false` when it did not.
 
-`exitCode` and `output` are optional and named. A ping with output is sent as a `POST` with the output as the body; without one it stays a `GET`. `pingStart` carries neither — the job has not produced a result yet. Exit codes outside 0–255 are ignored by the server.
+`exitCode`, `output` and `version` are optional and named. A ping with output is sent as a `POST` with the output as the body; without one it stays a `GET`. `pingStart` carries no exit code or output — the job has not produced a result yet — but does carry a version. Exit codes outside 0–255 are ignored by the server.
 
 ## Options
 
@@ -151,6 +172,7 @@ $client = new OneMonitor\Sdk\Client(
 | `httpClient` | `?Psr\Http\Client\ClientInterface` | a plain Guzzle client | Any [PSR-18](https://www.php-fig.org/psr/psr-18/) client — for a proxy, custom TLS, or a different HTTP stack. A Guzzle client gets extra care — see below. |
 | `requestFactory` | `?Psr\Http\Message\RequestFactoryInterface` | `guzzlehttp/psr7` | Builds the ping requests (PSR-17). |
 | `streamFactory` | `?Psr\Http\Message\StreamFactoryInterface` | `guzzlehttp/psr7` | Builds the output body streams (PSR-17). |
+| `version` | `?string` | none | Sent with every ping that does not pass its own — see [Tagging pings with the deployed version](#tagging-pings-with-the-deployed-version). An invalid value is dropped and logged at `debug`, never thrown. |
 
 **Maximum time a ping can hold up your job: `timeout` + backoff sleeps — about 6.5 s with the defaults** (5 s of network time, plus 0.5 s and 1 s between the three attempts).
 
@@ -253,7 +275,7 @@ The interface declares the same four methods as `Client`.
 This package is at **0.x**, and Composer treats `0.x` minors as breaking. Require it as:
 
 ```json
-"1monitor/sdk-php": "^0.4"
+"1monitor/sdk-php": "^0.5"
 ```
 
 The version is deliberately below `1.0.0`: the SDK's stability promise cannot exceed that of the ping API it wraps, which is not yet formally versioned. `1.0.0` follows once it is.
