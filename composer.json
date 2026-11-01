@@ -4,7 +4,7 @@
     "type": "library",
     "license": "MIT",
     "keywords": ["1monitor", "monitoring", "cron", "heartbeat", "ping", "uptime", "observability"],
-    "homepage": "https://1monitor.io",
+    "homepage": "https://www.1monitor.io",
     "authors": [
         {
             "name": "Lukáš Břečka",
