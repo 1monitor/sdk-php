@@ -8,6 +8,12 @@ While the package is at `0.x`, minor releases may contain breaking changes.
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-11-01
+
+### Changed
+
+- The package homepage and the README link point to `https://www.1monitor.io`, the canonical address, instead of the redirecting `https://1monitor.io`.
+
 ## [0.5.0] - 2026-10-03
 
 ### Added
@@ -65,7 +71,8 @@ Initial release.
 - Retries on connection failures and `5xx` only, with 0.5 s / 1 s backoff, bounded by an overall time budget shared across attempts.
 - `OneMonitor\Sdk\Exception\InvalidArgumentException` for misconfiguration and empty tokens.
 
-[Unreleased]: https://github.com/1monitor/sdk-php/compare/0.5.0...HEAD
+[Unreleased]: https://github.com/1monitor/sdk-php/compare/0.5.1...HEAD
+[0.5.1]: https://github.com/1monitor/sdk-php/compare/0.5.0...0.5.1
 [0.5.0]: https://github.com/1monitor/sdk-php/compare/0.4.0...0.5.0
 [0.4.0]: https://github.com/1monitor/sdk-php/compare/0.3.0...0.4.0
 [0.3.0]: https://github.com/1monitor/sdk-php/compare/0.2.0...0.3.0

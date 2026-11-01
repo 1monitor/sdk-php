@@ -5,7 +5,7 @@
 [![PHP](https://img.shields.io/packagist/dependency-v/1monitor/sdk-php/php.svg)](https://packagist.org/packages/1monitor/sdk-php)
 [![License](https://img.shields.io/packagist/l/1monitor/sdk-php.svg)](LICENSE)
 
-Official PHP SDK for [1Monitor](https://1monitor.io) — ping your cron jobs, queue workers and scheduled tasks so you find out when they stop running.
+Official PHP SDK for [1Monitor](https://www.1monitor.io) — ping your cron jobs, queue workers and scheduled tasks so you find out when they stop running.
 
 ```php
 $client = new OneMonitor\Sdk\Client();
