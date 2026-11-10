@@ -26,7 +26,7 @@ use Throwable;
  */
 final class Client implements ClientInterface
 {
-    public const VERSION = '0.5.1';
+    public const VERSION = '0.5.2';
 
     public const DEFAULT_BASE_URL = 'https://ping.1monitor.io';
     public const DEFAULT_TIMEOUT = 5.0;

@@ -8,6 +8,8 @@ While the package is at `0.x`, minor releases may contain breaking changes.
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-11-10
+
 ### Changed
 
 - A ping rejected with `429 Too Many Requests` is logged at `warning` level instead of `error`. It still returns `false` and is still not retried.
@@ -75,7 +77,8 @@ Initial release.
 - Retries on connection failures and `5xx` only, with 0.5 s / 1 s backoff, bounded by an overall time budget shared across attempts.
 - `OneMonitor\Sdk\Exception\InvalidArgumentException` for misconfiguration and empty tokens.
 
-[Unreleased]: https://github.com/1monitor/sdk-php/compare/0.5.1...HEAD
+[Unreleased]: https://github.com/1monitor/sdk-php/compare/0.5.2...HEAD
+[0.5.2]: https://github.com/1monitor/sdk-php/compare/0.5.1...0.5.2
 [0.5.1]: https://github.com/1monitor/sdk-php/compare/0.5.0...0.5.1
 [0.5.0]: https://github.com/1monitor/sdk-php/compare/0.4.0...0.5.0
 [0.4.0]: https://github.com/1monitor/sdk-php/compare/0.3.0...0.4.0
