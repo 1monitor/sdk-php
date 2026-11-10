@@ -350,6 +350,21 @@ final class ClientTest extends TestCase
         self::assertSame(1, $logger->records[0]['context']['attempts']);
     }
 
+    public function testRateLimitedPingIsReportedAsWarning(): void
+    {
+        $logger = new RecordingLogger();
+        $requests = [];
+        $client = self::clientFor([new Response(429)], $requests, retries: 2, logger: $logger);
+
+        self::assertFalse($client->ping('tok_abc'));
+
+        self::assertCount(1, $requests);
+        self::assertCount(1, $logger->records);
+        self::assertSame('warning', $logger->records[0]['level']);
+        self::assertSame('1Monitor ping failed.', $logger->records[0]['message']);
+        self::assertSame(429, $logger->records[0]['context']['status']);
+    }
+
     public function testTheLoggedContextDoesNotLeakTheToken(): void
     {
         $logger = new RecordingLogger();
