@@ -8,6 +8,10 @@ While the package is at `0.x`, minor releases may contain breaking changes.
 
 ## [Unreleased]
 
+### Changed
+
+- A ping rejected with `429 Too Many Requests` is logged at `warning` level instead of `error`. It still returns `false` and is still not retried.
+
 ## [0.5.1] - 2026-11-01
 
 ### Changed

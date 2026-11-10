@@ -14,6 +14,7 @@ use Psr\Http\Client\ClientInterface as HttpClientInterface;
 use Psr\Http\Message\RequestFactoryInterface;
 use Psr\Http\Message\StreamFactoryInterface;
 use Psr\Log\LoggerInterface;
+use Psr\Log\LogLevel;
 use Psr\Log\NullLogger;
 use Throwable;
 
@@ -212,7 +213,10 @@ final class Client implements ClientInterface
         // The token is a credential, so neither it nor anything that carries it
         // may reach the log: the exception object is not passed on (HTTP client
         // exceptions embed the request and its URL) and its message is redacted.
-        $this->logger->error('1Monitor ping failed.', [
+        // A 429 means pings arrive faster than the server accepts them, not that
+        // the server is unreachable, so it is reported as a warning.
+        $level = $status === 429 ? LogLevel::WARNING : LogLevel::ERROR;
+        $this->logger->log($level, '1Monitor ping failed.', [
             'state' => $state->value,
             'baseUrl' => $this->baseUrl,
             'attempts' => $attempt,

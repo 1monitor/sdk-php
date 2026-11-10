@@ -224,7 +224,7 @@ if (!$client->pingSuccess($token)) {
 }
 ```
 
-Failures are reported to the PSR-3 logger you pass in, at `error` level. The context carries:
+Failures are reported to the PSR-3 logger you pass in, at `error` level — except a `429`, which is logged at `warning`: it means pings are arriving faster than 1Monitor accepts them, not that 1Monitor cannot be reached. The context carries:
 
 | Key | Value |
 |---|---|
