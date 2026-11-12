@@ -1,0 +1,60 @@
+name: Session links
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: session-links-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: No Claude session links
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Check commit messages, tracked files and the pull request body
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          pattern='claude\.ai/code|^Claude-Session:'
+          bad=0
+
+          if git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            for sha in $(git rev-list "$BASE..$HEAD"); do
+              if git log -1 --format=%B "$sha" | grep -qiE "$pattern"; then
+                echo "::error::Commit ${sha:0:8} carries a Claude session link: $(git log -1 --format=%s "$sha")"
+                bad=1
+              fi
+            done
+          fi
+
+          if git grep -qiE "$pattern" "$HEAD" -- ':!.github/workflows/session-links.yml'; then
+            git grep -niE "$pattern" "$HEAD" -- ':!.github/workflows/session-links.yml'
+            echo "::error::Tracked files carry a Claude session link."
+            bad=1
+          fi
+
+          if printf '%s\n' "$PR_BODY" | grep -qiE "$pattern"; then
+            echo "::error::The pull request body carries a Claude session link."
+            bad=1
+          fi
+
+          if [ "$bad" -ne 0 ]; then
+            echo 'This repository is public: keep the Co-Authored-By trailer, drop the Claude-Session line and every claude.ai/code link.'
+            exit 1
+          fi
+
+          echo 'No Claude session links.'
